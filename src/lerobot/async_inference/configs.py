@@ -14,6 +14,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import warnings
 
 import torch
 
@@ -97,6 +98,84 @@ class PolicyServerConfig:
             "environment_dt": self.environment_dt,
             "inference_latency": self.inference_latency,
         }
+
+
+@dataclass
+class ReplayDatasetConfig:
+    """Dataset configuration for ReplayServer, matching the ``--dataset.*``
+    convention used by ``lerobot-replay`` and ``lerobot-record``."""
+
+    # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}'.
+    repo_id: str = field(
+        default="",
+        metadata={"help": "Dataset identifier, e.g. '{hf_username}/{dataset_name}'"},
+    )
+    # Root directory where the dataset is stored locally.
+    root: str = field(
+        default="",
+        metadata={"help": "Local directory where the dataset is stored"},
+    )
+    # Episode to replay.
+    episode: int = field(
+        default=0, metadata={"help": "Which episode index to replay from the dataset"}
+    )
+
+    def __post_init__(self):
+        if not self.repo_id:
+            raise ValueError("dataset.repo_id cannot be empty")
+
+
+@dataclass
+class ReplayServerConfig(PolicyServerConfig):
+    """Configuration for ReplayServer.
+
+    This class extends PolicyServerConfig with additional parameters for
+    replaying recorded actions from a LeRobot dataset. Uses the same
+    ``--dataset.*`` CLI convention as ``lerobot-replay`` and ``lerobot-record``.
+    """
+
+    dataset: ReplayDatasetConfig = field(default_factory=ReplayDatasetConfig)
+
+    # Deprecated: use num_repeats instead. Kept for backward compatibility.
+    loop: bool = field(
+        default=True,
+        metadata={"help": "Deprecated. Use num_repeats instead. "
+                          "If explicitly set, overrides num_repeats."},
+    )
+
+    # Number of times to replay the episode.
+    #   0 = infinite (loop forever, equivalent to old loop=True)
+    #   1 = play once then stop (equivalent to old loop=False)
+    #   N = play exactly N times, then clamp to last frame
+    num_repeats: int = field(
+        default=0,
+        metadata={
+            "help": "Number of times to replay the episode. "
+                    "0 = infinite (loop forever). N = replay exactly N times, "
+                    "then stop at the last frame. Default: 0 (infinite)."
+        },
+    )
+
+    def __post_init__(self):
+        """Validate configuration and handle backward compatibility."""
+        super().__post_init__()
+
+        if self.num_repeats < 0:
+            raise ValueError(
+                f"num_repeats must be >= 0 (0 = infinite), got {self.num_repeats}"
+            )
+
+        # Backward compatibility: if the user explicitly passed --loop=false,
+        # translate to num_repeats=1 (play once).
+        if not self.loop:
+            warnings.warn(
+                "--loop is deprecated. Use --num_repeats=0 for infinite "
+                "or --num_repeats=N for N repetitions.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if self.num_repeats == 0:
+                self.num_repeats = 1
 
 
 @dataclass

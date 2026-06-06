@@ -158,6 +158,8 @@ def teleop_loop(
 
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
+    consecutive_errors = 0
+    max_consecutive_errors = 5
     while True:
         loop_start = time.perf_counter()
 
@@ -165,7 +167,24 @@ def teleop_loop(
         # Not really needed for now other than for visualization
         # teleop_action_processor can take None as an observation
         # given that it is the identity processor as default
-        obs = robot.get_observation()
+        try:
+            obs = robot.get_observation()
+            consecutive_errors = 0
+        except ConnectionError as e:
+            consecutive_errors += 1
+            if consecutive_errors >= max_consecutive_errors:
+                logging.error(
+                    f"Robot communication failed {consecutive_errors} times in a row. "
+                    f"Check USB connection, motor power, and UART bus integrity. Stopping."
+                )
+                raise
+            logging.warning(
+                f"Robot communication error ({consecutive_errors}/{max_consecutive_errors}): {e}. "
+                f"Skipping this frame."
+            )
+            dt_s = time.perf_counter() - loop_start
+            precise_sleep(max(1 / fps - dt_s, 0.0))
+            continue
 
         if robot.name == "unitree_g1":
             teleop.send_feedback(obs)
