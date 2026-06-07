@@ -99,8 +99,9 @@ lerobot-record \
 ```
 
 ## 可视化整个数据集
-https://huggingface.co/spaces/lerobot/visualize_dataset
-http://io-ai.tech/lerobot
+- huggingface提供的可视化数据集工具：https://huggingface.co/spaces/lerobot/visualize_dataset
+
+- 由艾欧智能开发的本地 LeRobot 数据可视化检查工具：http://io-ai.tech/lerobot
 
 
 重放录制的episode
