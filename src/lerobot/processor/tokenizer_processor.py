@@ -108,7 +108,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         elif self.tokenizer_name is not None:
             if AutoTokenizer is None:
                 raise ImportError("AutoTokenizer is not available")
-            self.input_tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+            self.input_tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name, local_files_only=True)
         else:
             raise ValueError(
                 "Either 'tokenizer' or 'tokenizer_name' must be provided. "
@@ -390,6 +390,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             trust_remote_code=self.trust_remote_code,
             add_eos_token=True,
             add_bos_token=False,
+            local_files_only=True
         )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:

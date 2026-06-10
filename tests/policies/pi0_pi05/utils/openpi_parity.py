@@ -54,7 +54,7 @@ class OpenPIObservation:
 
 @lru_cache(maxsize=1)
 def paligemma_tokenizer():
-    return AutoTokenizer.from_pretrained(TOKENIZER_NAME)
+    return AutoTokenizer.from_pretrained(TOKENIZER_NAME, local_files_only=True)
 
 
 def clone_batch(batch: dict) -> dict:
