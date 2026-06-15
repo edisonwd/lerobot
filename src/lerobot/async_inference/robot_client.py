@@ -100,12 +100,23 @@ class RobotClient:
         # Use environment variable if server_address is not provided in config
         self.server_address = config.server_address
 
+        # Construct RTC config if enabled
+        rtc_config = None
+        if config.rtc_enabled:
+            from lerobot.policies.rtc.configuration_rtc import RTCConfig
+            rtc_config = RTCConfig(
+                enabled=True,
+                execution_horizon=config.rtc_execution_horizon,
+                max_guidance_weight=config.rtc_max_guidance_weight,
+            )
+
         self.policy_config = RemotePolicyConfig(
             config.policy_type,
             config.pretrained_name_or_path,
             lerobot_features,
             config.actions_per_chunk,
             config.policy_device,
+            rtc_config=rtc_config,
         )
         self.channel = grpc.insecure_channel(
             self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")

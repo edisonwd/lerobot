@@ -10,7 +10,7 @@ lerobot-train \
   --policy.dtype=bfloat16 \
   --policy.freeze_vision_encoder=false \
   --policy.train_expert_only=false \
-  --steps=50000 \
+  --steps=10000 \
   --policy.device=cuda \
   --policy.push_to_hub=false \
   --batch_size=8

@@ -23,6 +23,7 @@ from typing import Any
 import torch
 
 from lerobot.configs import PolicyFeature
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
 from lerobot.policies import (  # noqa: F401
@@ -270,6 +271,7 @@ class RemotePolicyConfig:
     actions_per_chunk: int
     device: str = "cpu"
     rename_map: dict[str, str] = field(default_factory=dict)
+    rtc_config: RTCConfig | None = None
 
 
 def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tensor, atol: float) -> bool:

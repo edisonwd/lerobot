@@ -70,7 +70,6 @@ def make_act_pre_post_processors(
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
-        DeviceProcessorStep(device="cpu"),
     ]
 
     return (

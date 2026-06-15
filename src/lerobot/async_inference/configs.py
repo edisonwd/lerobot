@@ -227,6 +227,11 @@ class RobotClientConfig:
         default=False, metadata={"help": "Visualize the action queue size"}
     )
 
+    # RTC configuration
+    rtc_enabled: bool = field(default=False, metadata={"help": "Enable RTC on server"})
+    rtc_execution_horizon: int = field(default=10, metadata={"help": "RTC execution horizon"})
+    rtc_max_guidance_weight: float = field(default=10.0, metadata={"help": "RTC max guidance weight"})
+
     @property
     def environment_dt(self) -> float:
         """Environment time step, in seconds"""
@@ -279,4 +284,7 @@ class RobotClientConfig:
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
+            "rtc_enabled": self.rtc_enabled,
+            "rtc_execution_horizon": self.rtc_execution_horizon,
+            "rtc_max_guidance_weight": self.rtc_max_guidance_weight,
         }

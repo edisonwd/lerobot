@@ -217,3 +217,98 @@ def test_predict_action_chunk(monkeypatch, policy_server):
     for i, ta in enumerate(timed_actions):
         expected_ts = obs.get_timestamp() + i * policy_server.config.environment_dt
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
+
+
+# -----------------------------------------------------------------------------
+# RTC Tests
+# -----------------------------------------------------------------------------
+
+
+def test_rtc_disabled_by_default(policy_server):
+    """RTC should be disabled by default."""
+    assert policy_server._rtc_enabled is False
+    assert policy_server._rtc_queue is None
+    assert policy_server._rtc_latency_tracker is None
+
+
+def test_rtc_init_with_rtc_policy(policy_server):
+    """Test that RTC state is initialized when policy has rtc_config."""
+    from lerobot.policies.rtc.configuration_rtc import RTCConfig
+
+    policy_server.policy.config.rtc_config = RTCConfig(enabled=True)
+    policy_server.preprocessor = type("_Mock", (), {"steps": []})()
+    policy_server._init_rtc_state()
+
+    assert policy_server._rtc_enabled is True
+    assert policy_server._rtc_queue is not None
+    assert policy_server._rtc_latency_tracker is not None
+
+
+def test_rtc_queue_tracks_leftover():
+    """Test that ActionQueue correctly tracks leftover actions."""
+    from lerobot.policies.rtc.action_queue import ActionQueue
+    from lerobot.policies.rtc.configuration_rtc import RTCConfig
+
+    rtc_config = RTCConfig(enabled=True, execution_horizon=5)
+    queue = ActionQueue(rtc_config)
+
+    # Initially no leftover
+    assert queue.get_left_over() is None
+
+    # Merge with delay=2: skip first 2 actions
+    original = torch.randn(10, 6)
+    processed = torch.randn(10, 6)
+    queue.merge(original, processed, real_delay=2)
+
+    # After merge, queue has 8 actions (10 - 2)
+    assert queue.queue.shape[0] == 8
+
+    # get_left_over returns the unconsumed tail (all 8 since last_index=0)
+    assert queue.get_left_over().shape == (8, 6)
+
+
+def test_rtc_delay_skip():
+    """Test that delay causes correct number of actions to be skipped."""
+    from lerobot.policies.rtc.action_queue import ActionQueue
+    from lerobot.policies.rtc.configuration_rtc import RTCConfig
+
+    rtc_config = RTCConfig(enabled=True, execution_horizon=5)
+    queue = ActionQueue(rtc_config)
+
+    original = torch.arange(10).unsqueeze(-1).float()
+    queue.merge(original, original.clone(), real_delay=3)
+
+    # 3 actions skipped, 7 remain
+    assert queue.queue.shape[0] == 7
+    # First action should be index 3 (0-indexed)
+    assert queue.queue[0].item() == 3.0
+
+
+def test_predict_action_chunk_with_rtc(monkeypatch, policy_server):
+    """End-to-end test of `_predict_action_chunk` with RTC enabled."""
+    from lerobot.async_inference.policy_server import PolicyServer
+    from lerobot.policies.rtc.configuration_rtc import RTCConfig
+
+    # Enable RTC
+    policy_server.policy.config.rtc_config = RTCConfig(enabled=True)
+    policy_server.preprocessor = type("_Mock", (), {"steps": []})()
+    policy_server.postprocessor = lambda t: t  # identity
+    policy_server._init_rtc_state()
+
+    action_dim = 6
+    batch_size = 1
+    actions_per_chunk = policy_server.actions_per_chunk
+
+    def _fake_get_action_chunk(_self, _obs, **kwargs):
+        # Verify RTC kwargs are passed
+        assert "inference_delay" in kwargs
+        assert "prev_chunk_left_over" in kwargs
+        return torch.zeros(batch_size, actions_per_chunk, action_dim)
+
+    monkeypatch.setattr(PolicyServer, "_get_action_chunk", _fake_get_action_chunk, raising=True)
+
+    obs = _make_obs(torch.zeros(6), timestep=5)
+    timed_actions = policy_server._predict_action_chunk(obs)
+
+    assert len(timed_actions) <= actions_per_chunk
+    assert [ta.get_timestep() for ta in timed_actions][0] >= 5

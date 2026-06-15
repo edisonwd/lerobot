@@ -158,6 +158,122 @@ if obs.must_go:
 
 ---
 
+## Pi0 机械臂运动缓慢问题分析
+
+### 根因：Flow Matching 推理延迟远高于 ACT
+
+Pi0 使用 **flow matching（10 步去噪）**，每做一次推理需要：
+- 1 次完整 PaliGemma VLM 前向传播（2B 参数）
+- 10 次 action expert 前向传播（300M 参数）
+
+| 策略 | 推理方式 | 预计延迟 (GPU) |
+|------|----------|---------------|
+| ACT | 单次前向传播 (CVAE) | 10–50ms |
+| Pi0 | 10 步去噪 (flow matching) | 200–1500ms |
+
+**Pi0 比 ACT 慢 10–30 倍**，这是架构层面的根本差异。
+
+### 时间线分析：Action Buffer Underrun
+
+用默认参数 `actions_per_chunk=50, chunk_size_threshold=0.5, fps=30`：
+
+```
+t=0ms      Server 返回 50 个动作 → 队列满
+t=0~833ms  机器人以 30Hz 消耗动作 (每 33ms 一个)
+t=833ms    队列剩 25 个 (50% 阈值) → 发送新观测给 Server
+t=833ms+   Server 开始 Pi0 推理... (需要 500–1500ms)
+t=1667ms   队列空了 → 机器人卡住等待新动作
+```
+
+**缓冲窗口计算：**
+```
+buffer_window = (actions_per_chunk × chunk_size_threshold) / fps
+              = (50 × 0.5) / 30
+              = 0.833 秒
+```
+
+当 Pi0 推理时间 > 833ms 时，机器人会**反复停滞等待**，表现为"运动很慢"或"一卡一卡"。
+
+### Server 端 `inference_latency` 无法保护慢推理
+
+`policy_server.py` 中的 sleep 只是一个**下限**（floor），不是上限：
+
+```python
+time.sleep(max(0, self.config.inference_latency - inference_time))
+```
+
+- 推理 10ms → sleep 23ms，保持 30Hz 节奏（ACT 场景）
+- 推理 800ms → sleep 0ms，**但已经太晚了**，队列早已空了
+
+这个 sleep 对 ACT 有效，对 Pi0 **不起保护作用**。
+
+### 解决方案
+
+| 方案 | 效果 | 权衡 |
+|------|------|------|
+| `--chunk_size_threshold=0.2` | 提前发观测，给 Server 更多推理时间 | 用更"旧"的观测推理 |
+| `--chunk_size_threshold=0.1` | 更早触发，进一步减少停滞 | 观测更陈旧 |
+| `--obs_queue_timeout=0.1` | 减少 Server 阻塞等待 | 更激进的超时 |
+| `num_inference_steps=5` (训练配置) | 延迟下降 ~50% | 动作质量略降 |
+| `num_inference_steps=3` (训练配置) | 延迟下降 ~70% | 动作质量明显下降 |
+| `compile_model=true` (训练配置) | 2–3× 加速 | 首次编译需要时间 |
+
+### 推荐参数组合（不修改训练配置）
+
+**Policy Server：**
+```bash
+uv run python -m lerobot.async_inference.policy_server \
+    --host=127.0.0.1 \
+    --port=8088 \
+    --fps=30 \
+    --inference_latency=0.033 \
+    --obs_queue_timeout=0.1
+```
+
+**Robot Client：**
+```bash
+uv run python -m lerobot.async_inference.robot_client \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem5B7B0137181 \
+    --robot.id=my_awesome_follower_arm \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --task="grasp orange" \
+    --server_address=127.0.0.1:8088 \
+    --policy_type=pi0 \
+    --pretrained_name_or_path=/root/gpufree-data/outputs/pi0_training/checkpoints/last/pretrained_model \
+    --policy_device=cuda \
+    --actions_per_chunk=50 \
+    --chunk_size_threshold=0.2 \
+    --aggregate_fn_name=weighted_average
+```
+
+### 优化后的时间线
+
+`chunk_size_threshold=0.2` 时：
+
+```
+t=0ms      Server 返回 50 个动作 → 队列满
+t=0~1333ms 机器人以 30Hz 消耗动作
+t=1333ms   队列剩 10 个 (20% 阈值) → 发送新观测给 Server
+t=1333ms+  Server 开始 Pi0 推理...
+t=2000ms   队列空了？→ 但如果推理在 1667ms 前完成，就不会停滞
+```
+
+缓冲窗口从 833ms 扩大到 1333ms，给 Pi0 多争取了 ~500ms 的推理时间余量。
+
+### 根本优化：减少去噪步数
+
+如果调整参数后仍然慢，需要在训练配置中减少 `num_inference_steps`：
+
+```python
+# configuration_pi0.py 或训练 checkpoint 的配置
+num_inference_steps: int = 5  # 默认 10，降到 5 可减半推理时间
+```
+
+这需要在训练或导出模型时设置，推理时无法动态修改。
+
+---
+
 ## Pi0 vs ACT 在异步模式中的对比
 
 | 方面 | Pi0 | ACT |
@@ -369,3 +485,70 @@ uv run python -m lerobot.async_inference.robot_client \
 | `--aggregate_fn_name` | Client | 仅 Client 使用 |
 | `--server_address` | Client | 连接 Server 的地址 |
 | `--robot.*` | Client | 仅 Client 使用 |
+
+---
+
+## lerobot-rollout 单进程本地推理
+
+`lerobot-rollout --strategy.type=base` 是**单进程本地推理**，策略和机器人在同一个进程中直接通信，不需要网络、不需要特征序列化/反序列化。
+
+### 命令示例
+
+```bash
+uv run lerobot-rollout \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem5B7B0137181 \
+    --robot.id=lerobot \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --policy.path=/Users/edison/myprojects/lerobot/outputs/pi0 \
+    --device=mps \
+    --rollout.fps=10  
+
+```
+
+### 关键参数说明
+
+| 参数 | 说明 |
+|------|------|
+| `--policy.path` | 本地模型路径（包含 `config.json`、`model.safetensors` 等文件） |
+| `--device` | 推理设备，推荐 `cuda`。Mac 上只能用 `cpu`（Pi0 在 CPU 上极慢，不推荐实际使用） |
+| `--rollout.task` | 语言指令，发送给模型的 task prompt |
+| `--rollout.num_episodes` | 运行轮数 |
+
+### 与 PolicyServer + RobotClient 的对比
+
+| 方面 | lerobot-rollout | PolicyServer + RobotClient |
+|------|----------------|---------------------------|
+| 架构 | 单进程 | 双进程 gRPC |
+| 网络 | 不需要 | 需要 SSH 隧道或同机部署 |
+| 特征序列化 | 不需要 | 需要两端对齐 |
+| RTC 支持 | 可用（`--inference.type=rtc`） | 休眠 |
+| 适用场景 | 本地调试、验证 | 远程部署、生产环境 |
+| Pi0 推理慢 | 同样存在 | 可通过 `chunk_size_threshold` 缓解 |
+
+### 模型目录结构要求
+
+`--policy.path` 指向的目录必须包含：
+
+```
+outputs/pi0/
+├── config.json                          # PI0Config 序列化
+├── model.safetensors                    # 模型权重
+├── policy_preprocessor.json             # 预处理器配置
+├── policy_preprocessor_step_*.safetensors  # 归一化统计量
+├── policy_postprocessor.json            # 后处理器配置
+├── policy_postprocessor_step_*.safetensors # 反归一化统计量
+└── train_config.json                    # 训练配置
+```
+
+这些文件由 `lerobot-train` 在训练结束后自动保存到 `outputs/<policy_name>/` 或 `checkpoints/last/pretrained_model/`。
+
+### Mac 本地运行注意事项
+
+Pi0 在 Mac 上 **不支持 MPS 后端**，只能用 `--device=cpu`，但：
+
+- 单次推理需要数秒（2B VLM + 10×300M action expert）
+- 机械臂会频繁停滞等待动作
+- **仅适合验证模型加载和推理链路是否正确**
+
+实际部署请将有 CUDA GPU 的云端服务器 + PolicyServer 架构。

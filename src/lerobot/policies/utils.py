@@ -194,9 +194,8 @@ def make_robot_action(action_tensor: PolicyAction, ds_features: dict[str, dict])
     action_tensor = action_tensor.to("cpu")
 
     action_names = ds_features[ACTION]["names"]
-    act_processed_policy: RobotAction = {
-        f"{name}": float(action_tensor[i]) for i, name in enumerate(action_names)
-    }
+    values = action_tensor.tolist()
+    act_processed_policy: RobotAction = {name: float(v) for name, v in zip(action_names, values)}
     return act_processed_policy
 
 

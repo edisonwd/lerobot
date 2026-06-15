@@ -308,7 +308,7 @@ lerobot-rollout \
     --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
     --robot.id=my_awesome_follower_arm \
     --task="grasp orange" \
-    --duration=60
+    --duration=600
 ```
 
 ### 带摄像头可视化（Rerun）

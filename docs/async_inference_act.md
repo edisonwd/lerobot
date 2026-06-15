@@ -166,3 +166,46 @@ SSH 隧道延迟 50-200ms → 新动作块到达前，旧动作已用完
 | 摄像头配置 | 必需 | 必需（且必须与训练时一致） |
 | 网络依赖 | 无 | SSH 隧道或直连 |
 | 适用场景 | 本地推理 | 远程 GPU 推理 + 本地机械臂 |
+
+---
+
+## Mac 本地运行性能问题
+
+### MPS 设备性能极差
+
+在 Mac 上使用 `--device=mps` 运行 ACT 或 Pi0 模型时，控制循环远低于目标 30 Hz：
+
+| 模型 | MPS 实际 FPS | 预期 FPS (CUDA) | 说明 |
+|------|-------------|----------------|------|
+| ACT | 1.6–6.9 Hz | 30 Hz | 预处理器/CPU 瓶颈 |
+| Pi0 | 0.3–27 Hz | 30 Hz | Gemma 算子回退到 CPU |
+
+**根因：** MPS 后端对 LeRobot 策略模型的算子支持不完善，大量算子回退到 CPU 执行，本质上是 CPU 在跑推理。
+
+### 降低 FPS 作为临时方案
+
+如果必须在 Mac 本地验证：
+
+```bash
+uv run lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=/Users/edison/myprojects/lerobot/outputs/outputs/train/my_first_train/checkpoints/last/pretrained_model \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem5B7B0137181 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --robot.id=my_awesome_follower_arm \
+    --task="grasp orange" \
+    --duration=60 \
+    --fps=5
+```
+
+降到 5 Hz 可以让推理有足够时间完成，但机械臂动作会更粗糙、响应更慢。
+
+### 推荐方案
+
+Mac 本地仅适合 **验证模型加载和推理链路是否正确**（能跑通一次 `predict_action_chunk` 即说明配置正确）。
+
+实际部署需要用 PolicyServer + RobotClient 架构，将策略模型放到 **CUDA GPU 服务器** 上运行：
+
+- ACT 在 CUDA GPU 上：~10–50ms/次，满 30 Hz
+- Pi0 在 CUDA GPU 上：~200–1500ms/次，需配合 `chunk_size_threshold=0.2` 缓解缓冲不足
