@@ -208,24 +208,32 @@ class TestJoyConConfig:
 
 
 class TestActionFeatures:
-    def test_action_features_with_gripper(self):
-        config = JoyConTeleopConfig(use_gripper=True)
+    def test_action_features_before_connect(self):
+        """Before connect(), mapping_engine is None → empty action features."""
+        config = JoyConTeleopConfig()
         teleop = JoyConTeleop(config)
         features = teleop.action_features
-        assert features["shape"] == (9,)
-        assert "gripper" in features["names"]
-        assert "delta_wx" in features["names"]
-        assert "wrist_flex" in features["names"]
-        assert "wrist_roll" in features["names"]
+        assert features["dtype"] == "float32"
+        assert features["shape"] == (0,)
+        assert features["names"] == {}
 
-    def test_action_features_without_gripper(self):
-        config = JoyConTeleopConfig(use_gripper=False)
+    def test_action_features_after_connect(self):
+        """After connect() with default mapping, action_features lists 6 motors with .pos keys."""
+        from lerobot.teleoperators.joycon.mapping_engine import MappingEngine
+
+        config = JoyConTeleopConfig()
         teleop = JoyConTeleop(config)
+        teleop.mapping_engine = MappingEngine.default(SO101_JOINT_LIMITS)
         features = teleop.action_features
-        assert features["shape"] == (8,)
-        assert "gripper" not in features["names"]
-        assert "delta_wz" in features["names"]
-        assert "wrist_flex" in features["names"]
+        assert features["dtype"] == "float32"
+        assert features["shape"] == (6,)
+        names = features["names"]
+        assert "shoulder_pan.pos" in names
+        assert "shoulder_lift.pos" in names
+        assert "elbow_flex.pos" in names
+        assert "wrist_flex.pos" in names
+        assert "wrist_roll.pos" in names
+        assert "gripper.pos" in names
 
     def test_feedback_features_empty(self):
         config = JoyConTeleopConfig()
@@ -1231,3 +1239,94 @@ mappings:
             "shoulder_pan", "shoulder_lift", "elbow_flex",
             "wrist_flex", "wrist_roll", "gripper",
         }
+
+
+class TestJoyConTeleopMappingIntegration:
+    """Integration tests for JoyConTeleop with MappingEngine.
+
+    Uses mock controller — no real hardware needed.
+    """
+
+    def _make_teleop_with_mock_controller(self, mapping_path=None):
+        """Create a JoyConTeleop with a mock controller and default mapping."""
+        config = JoyConTeleopConfig(mode=JoyConMode.SINGLE_LEFT, mapping_path=mapping_path)
+        teleop = JoyConTeleop(config)
+
+        # Create a mock controller
+        from unittest.mock import MagicMock
+        ctrl = MagicMock()
+        ctrl.mode = JoyConMode.SINGLE_LEFT
+        ctrl.devices = {"left": MagicMock()}
+        ctrl.stick_available = True
+        ctrl.buttons = {
+            "a": False, "b": False, "x": False, "y": False,
+            "l": False, "zl": False, "r": False, "zr": False,
+            "up": False, "down": False, "left": False, "right": False,
+            "plus": False, "minus": False, "home": False, "capture": False,
+            "l_stick_press": False, "r_stick_press": False,
+        }
+        ctrl.get_raw_left_stick.return_value = (0.0, 0.0)
+        ctrl.get_raw_right_stick.return_value = (0.0, 0.0)
+        ctrl.get_wrist_angles.return_value = (0.0, 0.0)
+        ctrl.speed_multiplier = 1.0
+        ctrl.fine_tune = False
+        ctrl.update = MagicMock()
+
+        teleop.controller = ctrl
+        teleop.mapping_engine = MappingEngine.default(SO101_JOINT_LIMITS)
+        teleop._current_targets = {m: 0.0 for m in teleop.mapping_engine.motors}
+        teleop._prev_speed_up = False
+        teleop._prev_speed_down = False
+        teleop._prev_fine_tune = False
+        return teleop
+
+    def test_get_action_returns_motor_positions(self):
+        teleop = self._make_teleop_with_mock_controller()
+        action = teleop.get_action()
+        # All motors should have .pos keys
+        for motor in teleop.mapping_engine.motors:
+            assert f"{motor}.pos" in action
+
+    def test_get_action_with_stick_input(self):
+        teleop = self._make_teleop_with_mock_controller()
+        teleop.init_targets({"shoulder_pan.pos": 0.0, "shoulder_lift.pos": 0.0,
+                             "elbow_flex.pos": 0.0, "wrist_flex.pos": 0.0,
+                             "wrist_roll.pos": 0.0, "gripper.pos": 50.0})
+        teleop.controller.get_raw_left_stick.return_value = (0.5, 0.0)
+        action = teleop.get_action()
+        assert action["shoulder_pan.pos"] == pytest.approx(0.75)  # 0 + 0.5*1.5
+
+    def test_init_targets_from_observation(self):
+        teleop = self._make_teleop_with_mock_controller()
+        obs = {
+            "shoulder_pan.pos": 45.0,
+            "shoulder_lift.pos": -30.0,
+            "elbow_flex.pos": 10.0,
+            "wrist_flex.pos": 5.0,
+            "wrist_roll.pos": -20.0,
+            "gripper.pos": 50.0,
+        }
+        teleop.init_targets(obs)
+        assert teleop._current_targets["shoulder_pan"] == 45.0
+        assert teleop._current_targets["shoulder_lift"] == -30.0
+
+    def test_action_features_match_mapping(self):
+        teleop = self._make_teleop_with_mock_controller()
+        features = teleop.action_features
+        names = features["names"]
+        assert "shoulder_pan.pos" in names
+        assert "gripper.pos" in names
+        assert features["shape"] == (6,)  # 6 motors
+
+    def test_meta_speed_up(self):
+        teleop = self._make_teleop_with_mock_controller()
+        teleop.controller.buttons["up"] = True
+        teleop.get_action()
+        assert teleop.controller.speed_multiplier == pytest.approx(1.2)
+
+    def test_meta_fine_tune_toggle(self):
+        teleop = self._make_teleop_with_mock_controller()
+        assert teleop.controller.fine_tune is False
+        teleop.controller.buttons["l_stick_press"] = True
+        teleop.get_action()
+        assert teleop.controller.fine_tune is True
