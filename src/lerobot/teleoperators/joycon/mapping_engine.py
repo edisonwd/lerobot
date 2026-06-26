@@ -25,6 +25,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +102,18 @@ class MetaControls:
                 raise ValueError(f"meta_controls.{name}: unknown input {val!r}")
 
 
-# ── Default mappings (placeholder for YAML loading in future task) ──────────
+# ── Built-in default mapping ────────────────────────────────────────────────
 
-_DEFAULT_MAPPINGS: list[MappingEntry] = []
+_DEFAULT_MAPPINGS = [
+    MappingEntry("left_stick_x", "shoulder_pan", "incremental", speed=1.5),
+    MappingEntry("left_stick_y", "shoulder_lift", "incremental", speed=1.5, invert=True),
+    MappingEntry("l", "elbow_flex", "incremental", speed=1.5),
+    MappingEntry("zl", "elbow_flex", "incremental", speed=1.5, invert=True),
+    MappingEntry("imu_tilt", "wrist_flex", "absolute", scale=0.5),
+    MappingEntry("imu_roll", "wrist_roll", "absolute", scale=0.5),
+    MappingEntry("a", "gripper", "incremental", speed=3.0),
+    MappingEntry("b", "gripper", "incremental", speed=3.0, invert=True),
+]
 
 
 # ── Mapping engine ──────────────────────────────────────────────────────────
@@ -182,3 +194,39 @@ class MappingEngine:
                 targets[entry.motor] = max(lo, min(hi, target))
 
         return targets
+
+    @classmethod
+    def from_yaml(cls, path: str | Path, joint_limits: dict) -> MappingEngine:
+        """Load mapping configuration from a YAML file."""
+        path = Path(path)
+        with open(path) as f:
+            data = yaml.safe_load(f)
+
+        mappings = []
+        for item in data.get("mappings", []):
+            mappings.append(MappingEntry(
+                input=item["input"],
+                motor=item["motor"],
+                control=item["control"],
+                speed=item.get("speed", 1.5),
+                scale=item.get("scale", 1.0),
+                invert=item.get("invert", False),
+            ))
+
+        meta_data = data.get("meta_controls", {})
+        meta = MetaControls(
+            speed_up=meta_data.get("speed_up", "dpad_up"),
+            speed_down=meta_data.get("speed_down", "dpad_down"),
+            fine_tune_toggle=meta_data.get("fine_tune_toggle", "l_stick_press"),
+        )
+
+        logger.info(
+            "Loaded mapping from %s: %d entries, %d motors",
+            path, len(mappings), len(set(e.motor for e in mappings)),
+        )
+        return cls(mappings, meta, joint_limits)
+
+    @classmethod
+    def default(cls, joint_limits: dict) -> MappingEngine:
+        """Create engine with built-in default mapping."""
+        return cls(list(_DEFAULT_MAPPINGS), MetaControls(), joint_limits)

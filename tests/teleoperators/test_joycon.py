@@ -1183,3 +1183,51 @@ class TestComputeTargets:
             {"shoulder_pan": 10.0},
         )
         assert result["shoulder_pan"] == pytest.approx(10.0)
+
+
+class TestMappingEngineFromYaml:
+    def test_load_from_yaml(self, tmp_path):
+        yaml_content = """\
+mappings:
+  - input: left_stick_x
+    motor: shoulder_pan
+    control: incremental
+    speed: 2.0
+    invert: false
+  - input: imu_tilt
+    motor: wrist_flex
+    control: absolute
+    scale: 0.3
+meta_controls:
+  speed_up: r
+  speed_down: zr
+  fine_tune_toggle: r_stick_press
+"""
+        yaml_file = tmp_path / "test_mapping.yaml"
+        yaml_file.write_text(yaml_content)
+        engine = MappingEngine.from_yaml(yaml_file, SO101_JOINT_LIMITS)
+        assert len(engine.mappings) == 2
+        assert engine.mappings[0].speed == 2.0
+        assert engine.mappings[1].scale == 0.3
+        assert engine.meta_controls.speed_up == "r"
+        assert engine.meta_controls.fine_tune_toggle == "r_stick_press"
+
+    def test_load_yaml_without_meta_uses_defaults(self, tmp_path):
+        yaml_content = """\
+mappings:
+  - input: left_stick_x
+    motor: shoulder_pan
+    control: incremental
+"""
+        yaml_file = tmp_path / "test_mapping.yaml"
+        yaml_file.write_text(yaml_content)
+        engine = MappingEngine.from_yaml(yaml_file, SO101_JOINT_LIMITS)
+        assert engine.meta_controls.speed_up == "dpad_up"
+        assert engine.meta_controls.speed_down == "dpad_down"
+
+    def test_default_mapping_covers_all_motors(self):
+        engine = MappingEngine.default(SO101_JOINT_LIMITS)
+        assert set(engine.motors) == {
+            "shoulder_pan", "shoulder_lift", "elbow_flex",
+            "wrist_flex", "wrist_roll", "gripper",
+        }
