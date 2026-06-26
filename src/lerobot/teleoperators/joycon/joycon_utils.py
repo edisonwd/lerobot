@@ -774,47 +774,66 @@ class JoyConHIDController(InputController):
     def _parse_simple_report(self, side: str, data) -> None:
         """Parse a simple 0x3F report (buttons only, no stick data).
 
-        Simple mode (0x3F) has a different button layout than full mode (0x30).
-        When a Joy-Con is held sideways, the physical buttons are rotated 90° CW
-        relative to the vertical orientation used in full mode.
+        macOS Bluetooth simple mode (0x3F) layout — confirmed by raw dump:
+
+        Right Joy-Con:
+            Byte 1: Face buttons (same bit layout as full mode byte 3)
+                bit 0=Y, 1=X, 2=B, 3=A, 4=SR, 5=SL, 6=R, 7=ZR
+                Note: R/ZR bits are ALSO here (same as full mode).
+            Byte 2: Additional buttons (confirmed: 0x40=R, 0x80=ZR)
+                These appear to duplicate R/ZR from byte 1.
+            Byte 3: D-pad directions
+                0x00=center, 0x04=Up, 0x08=Down, 0x02=Right, 0x01=Left
+                Combined: 0x06=Up+Right, 0x0A=Down+Right, etc.
+
+        Left Joy-Con:
+            Byte 1: Buttons (same bit layout as full mode byte 5)
+            Byte 2: Additional buttons
+            Byte 3: D-pad directions (same encoding)
+
+        Simple mode does NOT include: Plus, Minus, Home, Capture, stick_press.
+        It also does NOT include stick or IMU data.
         """
-        if len(data) < 2:
+        if len(data) < 4:
             return
 
-        raw_bytes = list(data[:min(12, len(data))])
-
         if side == "right":
+            # Face buttons from byte 1 (same layout as full mode)
             right_btns = _parse_buttons_right(data[1])
             self.buttons.update(right_btns)
-            # Shared buttons from byte 2 if available
-            if len(data) >= 3:
-                shared_btns = _parse_buttons_shared(data[2])
-                self.buttons.update(shared_btns)
+
+            # D-pad from byte 3 (directional encoding)
+            dpad = data[3]
+            self.buttons["dpad_up"] = bool(dpad & 0x04)
+            self.buttons["dpad_down"] = bool(dpad & 0x08)
+            self.buttons["dpad_right"] = bool(dpad & 0x02)
+            self.buttons["dpad_left"] = bool(dpad & 0x01)
+
         elif side == "left":
+            # Face buttons from byte 1 (same layout as full mode)
             left_btns = _parse_buttons_left(data[1])
             self.buttons.update(left_btns)
-            if len(data) >= 3:
-                shared_btns = _parse_buttons_shared(data[2])
-                self.buttons.update(shared_btns)
+
+            # D-pad from byte 3
+            dpad = data[3]
+            self.buttons["dpad_up"] = bool(dpad & 0x04)
+            self.buttons["dpad_down"] = bool(dpad & 0x08)
+            self.buttons["dpad_right"] = bool(dpad & 0x02)
+            self.buttons["dpad_left"] = bool(dpad & 0x01)
+
         elif side == "combined":
-            if len(data) >= 4:
+            if len(data) >= 5:
                 right_btns = _parse_buttons_right(data[1])
                 left_btns = _parse_buttons_left(data[2])
-                shared_btns = _parse_buttons_shared(data[3])
                 self.buttons.update(right_btns)
                 self.buttons.update(left_btns)
-                self.buttons.update(shared_btns)
+                dpad = data[3]
+                self.buttons["dpad_up"] = bool(dpad & 0x04)
+                self.buttons["dpad_down"] = bool(dpad & 0x08)
+                self.buttons["dpad_right"] = bool(dpad & 0x02)
+                self.buttons["dpad_left"] = bool(dpad & 0x01)
 
-        # Debug: log raw bytes and active buttons when any button is pressed
-        active = [name for name, pressed in self.buttons.items() if pressed]
-        if active:
-            logger.info(
-                "Joy-Con (%s) simple [0x%s] active: %s",
-                side,
-                " ".join(f"{b:02x}" for b in raw_bytes),
-                active,
-            )
-
+        # Map buttons to actions (gripper, episode controls, etc.)
         self._map_buttons_to_actions()
 
     def _parse_battery(self, side: str, info_byte: int) -> None:

@@ -93,6 +93,7 @@ from lerobot.teleoperators import (  # noqa: F401
     bi_so_leader,
     gamepad,
     homunculus,
+    joycon,
     keyboard,
     koch_leader,
     make_teleoperator_from_config,
@@ -126,6 +127,8 @@ class TeleoperateConfig:
     display_port: int | None = None
     # Whether to  display compressed images in Rerun
     display_compressed_images: bool = False
+    # Max width for displayed images (downscale before logging, None = no resize)
+    display_max_width: int | None = None
 
 
 def teleop_loop(
@@ -138,6 +141,7 @@ def teleop_loop(
     display_data: bool = False,
     duration: float | None = None,
     display_compressed_images: bool = False,
+    display_max_width: int | None = None,
 ):
     """
     This function continuously reads actions from a teleoperation device, processes them through optional
@@ -150,6 +154,7 @@ def teleop_loop(
         fps: The target frequency for the control loop in frames per second.
         display_data: If True, fetches robot observations and displays them in the console and Rerun.
         display_compressed_images: If True, compresses images before sending them to Rerun for display.
+        display_max_width: If set, downscale images so width does not exceed this value before logging.
         duration: The maximum duration of the teleoperation loop in seconds. If None, the loop runs indefinitely.
         teleop_action_processor: An optional pipeline to process raw actions from the teleoperator.
         robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
@@ -209,6 +214,7 @@ def teleop_loop(
                 observation=obs_transition,
                 action=teleop_action,
                 compress_images=display_compressed_images,
+                display_max_width=display_max_width,
             )
 
             print("\n" + "-" * (display_len + 10))
@@ -258,6 +264,7 @@ def teleoperate(cfg: TeleoperateConfig):
             robot_action_processor=robot_action_processor,
             robot_observation_processor=robot_observation_processor,
             display_compressed_images=display_compressed_images,
+            display_max_width=cfg.display_max_width,
         )
     except KeyboardInterrupt:
         pass

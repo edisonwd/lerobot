@@ -109,11 +109,11 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
         scaled_delta_y = delta_y * self.position_scale
         scaled_delta_z = delta_z * self.position_scale
 
-        # For gamepad/keyboard, we don't have rotation input, so set to 0
-        # These could be extended in the future for more sophisticated teleoperators
-        target_wx = 0.0
-        target_wy = 0.0
-        target_wz = 0.0
+        # For gamepad/keyboard, we don't have rotation input, so default to 0.
+        # Joy-Con and advanced teleoperators can provide delta_wx/wy/wz.
+        target_wx = float(action.pop("delta_wx", 0.0)) * self.position_scale
+        target_wy = float(action.pop("delta_wy", 0.0)) * self.position_scale
+        target_wz = float(action.pop("delta_wz", 0.0)) * self.position_scale
 
         # Update action with robot target format
         action = {

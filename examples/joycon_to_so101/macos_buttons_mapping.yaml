@@ -1,0 +1,87 @@
+# Joy-Con → SO-101 舵机映射 (macOS 蓝牙 — 仅按键模式)
+#
+# macOS 蓝牙下 Joy-Con 只能使用 simple mode (0x3F)。
+# 确认能用的按键: A, B, X, Y, R, ZR, D-pad 方向键
+# 不可用: 摇杆、IMU、Plus/Minus/Home/Capture/Stick Press
+#
+# 用法:
+#   uv run python examples/joycon_to_so101/teleoperate.py \
+#       --port=/dev/tty.usbmodem* \
+#       --mode=single_right \
+#       --mapping=examples/joycon_to_so101/macos_buttons_mapping.yaml
+
+mappings:
+  # Motor 1: Shoulder Pan (A=正, B=反)
+  - input: a
+    motor: shoulder_pan
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: b
+    motor: shoulder_pan
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 2: Shoulder Lift (Y=正, X=反)
+  - input: y
+    motor: shoulder_lift
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: x
+    motor: shoulder_lift
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 3: Elbow Flex (R=正, ZR=反)
+  - input: r
+    motor: elbow_flex
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: zr
+    motor: elbow_flex
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 4: Wrist Flex (D-pad Up=正, Down=反)
+  - input: dpad_up
+    motor: wrist_flex
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: dpad_down
+    motor: wrist_flex
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 5: Wrist Roll (D-pad Right=正, Left=反)
+  - input: dpad_right
+    motor: wrist_roll
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: dpad_left
+    motor: wrist_roll
+    control: incremental
+    speed: 1.5
+    invert: true
+
+# Motor 6: Gripper — 右 Joy-Con 按键不够，暂未映射
+# 如使用双 Joy-Con 可添加 SL/SR 控制夹爪
+
+# 注意: macOS simple mode 按键有限，不配置速度/微调功能键
+# 速度固定为 100%，如需调速请使用双 Joy-Con
+meta_controls:
+  speed_up: capture
+  speed_down: home
+  fine_tune_toggle: plus
