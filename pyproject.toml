@@ -165,6 +165,7 @@ robstride = ["lerobot[can-dep]"]
 # Robots
 openarms = ["lerobot[damiao]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
+joycon = ["hidapi>=0.14.0,<0.15.0", "pyyaml>=6.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "lerobot[pyzmq-dep]"]
 unitree_g1 = [
@@ -267,6 +268,7 @@ all = [
     "lerobot[damiao]",
     "lerobot[robstride]",
     "lerobot[gamepad]",
+    "lerobot[joycon]",
     "lerobot[hopejr]",
     "lerobot[lekiwi]",
     "lerobot[openarms]",
