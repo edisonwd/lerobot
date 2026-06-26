@@ -772,45 +772,48 @@ class JoyConHIDController(InputController):
             self._parse_imu(data)
 
     def _parse_simple_report(self, side: str, data) -> None:
-        """Parse a simple 0x3F report (buttons only, no stick data).
+        """Parse a simple 0x3F report (buttons + stick, no IMU).
 
         macOS Bluetooth simple mode (0x3F) layout — confirmed by raw dump:
 
-        Right Joy-Con:
+        Right Joy-Con (12 bytes):
             Byte 1: Face buttons (same bit layout as full mode byte 3)
-                bit 0=Y, 1=X, 2=B, 3=A, 4=SR, 5=SL, 6=R, 7=ZR
-                Note: R/ZR bits are ALSO here (same as full mode).
-            Byte 2: Additional buttons (confirmed: 0x40=R, 0x80=ZR)
-                These appear to duplicate R/ZR from byte 1.
-            Byte 3: D-pad directions
-                0x00=center, 0x04=Up, 0x08=Down, 0x02=Right, 0x01=Left
-                Combined: 0x06=Up+Right, 0x0A=Down+Right, etc.
+            Byte 2: R/ZR (0x40=R, 0x80=ZR)
+            Byte 3: D-pad (0x04=Up, 0x08=Down, 0x02=Right, 0x01=Left)
+            Byte 4: Stick X (8-bit, 0x80=center)
+            Byte 5: Stick Y (8-bit, 0x80=center)
 
-        Left Joy-Con:
+        Left Joy-Con (12 bytes):
             Byte 1: Buttons (same bit layout as full mode byte 5)
-            Byte 2: Additional buttons
-            Byte 3: D-pad directions (same encoding)
+            Byte 2: L/ZL
+            Byte 3: D-pad
+            Byte 4: Stick X (8-bit, 0x80=center)
+            Byte 5: Stick Y (8-bit, 0x80=center)
 
-        Simple mode does NOT include: Plus, Minus, Home, Capture, stick_press.
-        It also does NOT include stick or IMU data.
+        Simple mode does NOT include: Plus, Minus, Home, Capture, stick_press, IMU.
         """
-        if len(data) < 4:
+        if len(data) < 6:
             return
 
         if side == "right":
-            # Face buttons from byte 1 (same layout as full mode)
+            # Face buttons from byte 1
             right_btns = _parse_buttons_right(data[1])
             self.buttons.update(right_btns)
 
-            # D-pad from byte 3 (directional encoding)
+            # D-pad from byte 3
             dpad = data[3]
             self.buttons["dpad_up"] = bool(dpad & 0x04)
             self.buttons["dpad_down"] = bool(dpad & 0x08)
             self.buttons["dpad_right"] = bool(dpad & 0x02)
             self.buttons["dpad_left"] = bool(dpad & 0x01)
 
+            # Stick from bytes 4-5 (8-bit, center=0x80)
+            self.right_x = self._normalize_simple_stick(data[4])
+            self.right_y = self._normalize_simple_stick(data[5])
+            self.stick_available = True
+
         elif side == "left":
-            # Face buttons from byte 1 (same layout as full mode)
+            # Face buttons from byte 1
             left_btns = _parse_buttons_left(data[1])
             self.buttons.update(left_btns)
 
@@ -821,20 +824,45 @@ class JoyConHIDController(InputController):
             self.buttons["dpad_right"] = bool(dpad & 0x02)
             self.buttons["dpad_left"] = bool(dpad & 0x01)
 
+            # Stick from bytes 4-5
+            self.left_x = self._normalize_simple_stick(data[4])
+            self.left_y = self._normalize_simple_stick(data[5])
+            self.stick_available = True
+
         elif side == "combined":
-            if len(data) >= 5:
-                right_btns = _parse_buttons_right(data[1])
-                left_btns = _parse_buttons_left(data[2])
-                self.buttons.update(right_btns)
-                self.buttons.update(left_btns)
-                dpad = data[3]
-                self.buttons["dpad_up"] = bool(dpad & 0x04)
-                self.buttons["dpad_down"] = bool(dpad & 0x08)
-                self.buttons["dpad_right"] = bool(dpad & 0x02)
-                self.buttons["dpad_left"] = bool(dpad & 0x01)
+            right_btns = _parse_buttons_right(data[1])
+            left_btns = _parse_buttons_left(data[2])
+            self.buttons.update(right_btns)
+            self.buttons.update(left_btns)
+            dpad = data[3]
+            self.buttons["dpad_up"] = bool(dpad & 0x04)
+            self.buttons["dpad_down"] = bool(dpad & 0x08)
+            self.buttons["dpad_right"] = bool(dpad & 0x02)
+            self.buttons["dpad_left"] = bool(dpad & 0x01)
+            # Combined stick data (if available)
+            if len(data) >= 8:
+                self.right_x = self._normalize_simple_stick(data[4])
+                self.right_y = self._normalize_simple_stick(data[5])
+                self.left_x = self._normalize_simple_stick(data[6])
+                self.left_y = self._normalize_simple_stick(data[7])
+                self.stick_available = True
 
         # Map buttons to actions (gripper, episode controls, etc.)
         self._map_buttons_to_actions()
+
+    def _normalize_simple_stick(self, raw: int) -> float:
+        """Normalize an 8-bit simple-mode stick value to [-1.0, 1.0].
+
+        Center is 0x80 (128). Range is 0x00–0xFF.
+        """
+        center = 0x80
+        offset = raw - center
+        normalized = offset / center  # scale to [-1.0, 1.0]
+
+        if abs(normalized) < self.deadzone:
+            return 0.0
+
+        return max(-1.0, min(1.0, normalized))
 
     def _parse_battery(self, side: str, info_byte: int) -> None:
         """Parse battery level from the connection info byte.
