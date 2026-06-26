@@ -631,14 +631,9 @@ class JoyConHIDController(InputController):
         plen = min(len(payload), 39)
         report[10 : 10 + plen] = payload[:plen]
 
-        # On macOS, hidapi requires a 0x00 prefix byte before the report ID
-        # for numbered output reports over Bluetooth.
-        import sys
-
-        if sys.platform == "darwin":
-            write_buf = bytes([0x00]) + bytes(report)
-        else:
-            write_buf = bytes(report)
+        # hidapi expects [report_id, data...] for numbered output reports.
+        # Report ID 0x01 is at report[0]. No extra prefix needed on any platform.
+        write_buf = bytes(report)
 
         try:
             written = dev.write(list(write_buf))

@@ -819,9 +819,9 @@ class TestGripperActionMap:
 import sys
 
 
-# On macOS, output reports have a 0x00 prefix byte, shifting all offsets by 1
-_MACOS_OFFSET = 1 if sys.platform == "darwin" else 0
-_EXPECTED_REPORT_LEN = 49 + _MACOS_OFFSET
+# No prefix needed — report ID 0x01 is the first byte on all platforms
+_MACOS_OFFSET = 0
+_EXPECTED_REPORT_LEN = 49
 
 
 class TestSubcommandFraming:
