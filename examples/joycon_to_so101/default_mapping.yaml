@@ -1,0 +1,77 @@
+# Joy-Con → SO-101 舵机映射配置 (默认)
+#
+# 输入类型:
+#   摇杆:  left_stick_x, left_stick_y, right_stick_x, right_stick_y
+#   按键:  a, b, x, y, l, zl, r, zr
+#          dpad_up, dpad_down, dpad_left, dpad_right
+#          plus, minus, home, capture
+#          l_stick_press, r_stick_press
+#   体感:  imu_tilt (前后倾斜), imu_roll (左右翻滚)
+#
+# 控制模式:
+#   incremental — 每帧增减角度 (摇杆/按键)
+#   absolute    — 直接设定目标角度 (IMU)
+
+mappings:
+  # Motor 1: Shoulder Pan (左右转)
+  - input: left_stick_x
+    motor: shoulder_pan
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  # Motor 2: Shoulder Lift (上下抬)
+  - input: left_stick_y
+    motor: shoulder_lift
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 3: Elbow Flex (肘部)
+  - input: l
+    motor: elbow_flex
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: zl
+    motor: elbow_flex
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 4: Wrist Flex (手腕俯仰)
+  - input: imu_tilt
+    motor: wrist_flex
+    control: absolute
+    scale: 0.5
+
+  # Motor 5: Wrist Roll (手腕旋转)
+  - input: imu_roll
+    motor: wrist_roll
+    control: absolute
+    scale: 0.5
+
+  # Motor 6: Gripper (夹爪)
+  - input: a
+    motor: gripper
+    control: incremental
+    speed: 3.0
+    invert: false
+
+  - input: b
+    motor: gripper
+    control: incremental
+    speed: 3.0
+    invert: true
+
+# 功能按键 (可配置)
+meta_controls:
+  speed_up: dpad_up        # 速度 +20%
+  speed_down: dpad_down    # 速度 -20%
+  fine_tune_toggle: l_stick_press  # 微调模式切换
+
+# 以下固定不可配置:
+#   home    → 紧急停止
+#   plus    → 成功标记
+#   minus   → 失败标记
