@@ -777,13 +777,46 @@ class JoyConHIDController(InputController):
             self._parse_imu(data)
 
     def _parse_simple_report(self, side: str, data) -> None:
-        """Parse a simple 0x3F report (buttons only, no stick or battery data)."""
-        # Simple mode doesn't include battery info — skip battery parsing.
+        """Parse a simple 0x3F report (buttons only, limited stick data).
 
-        # Simple report has a different button layout — 4 button bytes starting at byte 2
-        # This is a simplified fallback; full button parsing requires 0x30 mode.
-        if len(data) >= 6:
-            logger.debug("Joy-Con (%s): processing simple report (no stick).", side)
+        Simple mode 0x3F layout for a single Joy-Con over Bluetooth:
+            Byte 0: Report ID (0x3F)
+            Byte 1: Side-specific button byte (same bit layout as full mode)
+                - Right Joy-Con: same as full mode byte 3
+                - Left Joy-Con: same as full mode byte 5
+            Byte 2: Shared buttons (plus, minus, home, capture, l_stick_press)
+            Bytes 3+: Stick data (side-specific, 2 bytes per axis)
+
+        When two Joy-Cons are connected separately, each sends its own 0x3F.
+        When combined (grip), byte 1=right, byte 2=left, byte 3=shared.
+        """
+        if len(data) < 3:
+            return
+
+        if side == "right":
+            # Single right Joy-Con: byte 1 = right buttons, byte 2 = shared
+            right_btns = _parse_buttons_right(data[1])
+            shared_btns = _parse_buttons_shared(data[2])
+            self.buttons.update(right_btns)
+            self.buttons.update(shared_btns)
+        elif side == "left":
+            # Single left Joy-Con: byte 1 = left buttons, byte 2 = shared
+            left_btns = _parse_buttons_left(data[1])
+            shared_btns = _parse_buttons_shared(data[2])
+            self.buttons.update(left_btns)
+            self.buttons.update(shared_btns)
+        elif side == "combined":
+            # Combined: byte 1 = right, byte 2 = left, byte 3 = shared
+            if len(data) >= 4:
+                right_btns = _parse_buttons_right(data[1])
+                left_btns = _parse_buttons_left(data[2])
+                shared_btns = _parse_buttons_shared(data[3])
+                self.buttons.update(right_btns)
+                self.buttons.update(left_btns)
+                self.buttons.update(shared_btns)
+
+        # Map buttons to actions (gripper, episode controls, etc.)
+        self._map_buttons_to_actions()
 
     def _parse_battery(self, side: str, info_byte: int) -> None:
         """Parse battery level from the connection info byte.
