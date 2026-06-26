@@ -80,6 +80,10 @@ class SOFollower(Robot):
     def action_features(self) -> dict[str, type]:
         return self._motors_ft
 
+    def get_joint_limits(self) -> dict[str, tuple[float, float]]:
+        """Return {motor_name: (min_deg, max_deg)} from config."""
+        return self.config.joint_limits
+
     @property
     def is_connected(self) -> bool:
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())

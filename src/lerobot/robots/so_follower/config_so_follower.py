@@ -46,7 +46,16 @@ class SOFollowerConfig:
 @RobotConfig.register_subclass("so100_follower")
 @dataclass
 class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
-    pass
+    joint_limits: dict[str, tuple[float, float]] = field(
+        default_factory=lambda: {
+            "shoulder_pan": (-110.0, 110.0),
+            "shoulder_lift": (-100.0, 100.0),
+            "elbow_flex": (-97.0, 97.0),
+            "wrist_flex": (-95.0, 95.0),
+            "wrist_roll": (-157.0, 163.0),
+            "gripper": (0.0, 100.0),
+        }
+    )
 
 
 SO100FollowerConfig = SOFollowerRobotConfig
