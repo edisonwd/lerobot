@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from ..config import TeleoperatorConfig
@@ -64,3 +64,5 @@ class JoyConTeleopConfig(TeleoperatorConfig):
     speed_step: float = 0.2
     fine_tune_multiplier: float = 0.5
     mapping_path: str | None = None
+    alt_mapping_path: str | None = None
+    speed_levels: list[float] = field(default_factory=lambda: [0.5, 1.0, 1.5])

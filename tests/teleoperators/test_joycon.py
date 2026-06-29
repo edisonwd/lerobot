@@ -203,6 +203,26 @@ class TestJoyConConfig:
         assert JoyConMode.SINGLE_RIGHT.value == "single_right"
         assert JoyConMode.DUAL.value == "dual"
 
+    def test_config_alt_mapping_path(self):
+        config = JoyConTeleopConfig(
+            mapping_path="gyro.yaml",
+            alt_mapping_path="stick.yaml",
+        )
+        assert config.mapping_path == "gyro.yaml"
+        assert config.alt_mapping_path == "stick.yaml"
+
+    def test_config_alt_mapping_path_default_none(self):
+        config = JoyConTeleopConfig()
+        assert config.alt_mapping_path is None
+
+    def test_config_speed_levels(self):
+        config = JoyConTeleopConfig(speed_levels=[0.3, 1.0, 2.0])
+        assert config.speed_levels == [0.3, 1.0, 2.0]
+
+    def test_config_speed_levels_default(self):
+        config = JoyConTeleopConfig()
+        assert config.speed_levels == [0.5, 1.0, 1.5]
+
 
 # ── Tests: Action features ──────────────────────────────────────────────────
 
