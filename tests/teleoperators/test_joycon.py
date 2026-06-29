@@ -597,44 +597,40 @@ class TestLZAxis:
 
 
 class TestSpeedControl:
-    def test_speed_increase(self):
-        """D-pad up → speed increases by speed_step."""
+    def test_speed_cycles_through_levels(self):
+        """D-pad up cycles: normal(1.0) → fast(1.5) → fine(0.5) → normal(1.0)."""
         ctrl = _create_controller_with_fake_devices(mode=JoyConMode.DUAL)
-        assert ctrl.speed_multiplier == 1.0
-        # Simulate D-pad up press (rising edge)
-        ctrl._map_buttons_to_actions()  # initial: no press
+        assert ctrl.speed_level_index == 1  # normal
+        # Press up → fast
+        ctrl.buttons = {}
+        ctrl._map_buttons_to_actions()
         ctrl.buttons = {"up": True}
         ctrl._map_buttons_to_actions()
-        assert ctrl.speed_multiplier == pytest.approx(1.2)
+        assert ctrl.speed_level_index == 2
+        assert ctrl.speed_multiplier == 1.5
+        # Press up → fine (wraps)
+        ctrl.buttons = {}
+        ctrl._map_buttons_to_actions()
+        ctrl.buttons = {"up": True}
+        ctrl._map_buttons_to_actions()
+        assert ctrl.speed_level_index == 0
+        assert ctrl.speed_multiplier == 0.5
+        # Press up → normal (wraps back)
+        ctrl.buttons = {}
+        ctrl._map_buttons_to_actions()
+        ctrl.buttons = {"up": True}
+        ctrl._map_buttons_to_actions()
+        assert ctrl.speed_level_index == 1
+        assert ctrl.speed_multiplier == 1.0
 
-    def test_speed_decrease(self):
-        """D-pad down → speed decreases by speed_step."""
+    def test_speed_down_no_longer_changes_speed(self):
+        """D-pad down no longer changes speed (now handled as reset_to_center meta control)."""
         ctrl = _create_controller_with_fake_devices(mode=JoyConMode.DUAL)
         ctrl.buttons = {}
         ctrl._map_buttons_to_actions()  # initial
         ctrl.buttons = {"down": True}
         ctrl._map_buttons_to_actions()
-        assert ctrl.speed_multiplier == pytest.approx(0.8)
-
-    def test_speed_max_bound(self):
-        """Speed cannot exceed max_speed."""
-        ctrl = _create_controller_with_fake_devices(mode=JoyConMode.DUAL)
-        ctrl.speed_multiplier = 2.0
-        ctrl.buttons = {}
-        ctrl._map_buttons_to_actions()
-        ctrl.buttons = {"up": True}
-        ctrl._map_buttons_to_actions()
-        assert ctrl.speed_multiplier == 2.0  # unchanged
-
-    def test_speed_min_bound(self):
-        """Speed cannot go below min_speed."""
-        ctrl = _create_controller_with_fake_devices(mode=JoyConMode.DUAL)
-        ctrl.speed_multiplier = 0.2
-        ctrl.buttons = {}
-        ctrl._map_buttons_to_actions()
-        ctrl.buttons = {"down": True}
-        ctrl._map_buttons_to_actions()
-        assert ctrl.speed_multiplier == 0.2  # unchanged
+        assert ctrl.speed_multiplier == 1.0  # unchanged
 
 
 # ── Tests: Fine-tune mode ───────────────────────────────────────────────────
@@ -940,19 +936,27 @@ class TestIMU:
         assert abs(ctrl.wrist_roll_angle) < 5.0
 
     def test_parse_imu_tilted_forward(self):
-        """Joy-Con tilted forward: acc_x positive → positive flex angle."""
+        """Joy-Con tilted forward: complementary filter produces positive fused angle.
+
+        With α=0.02 and near-zero dt (instant test frames), the fused output is
+        approximately α * accel_angle. The filter converges slowly over real time.
+        """
         report = _make_full_report()
         report[13] = 0x00  # acc_x = 4096
         report[14] = 0x10
         report[15] = 0x00  # acc_y = 0
         report[16] = 0x00
-        report[17] = 0x00  # acc_z = 0 (sideways)
+        report[17] = 0x00  # acc_z = 0 (sideways → accel pitch = 90°)
         report[18] = 0x00
+        for i in range(19, 25):
+            report[i] = 0x00  # gyro = 0
         ctrl = _create_controller_with_fake_devices(
             mode=JoyConMode.DUAL,
             left_reports=[report],
         )
-        assert ctrl.wrist_flex_angle > 45.0  # large forward tilt
+        # fused ≈ 0.02 * 90 + 0.98 * 0 = 1.8° (first frame, near-zero dt)
+        assert ctrl.wrist_flex_angle > 0.0
+        assert ctrl.imu_pitch > 0.0
 
     def test_get_wrist_angles_returns_tuple(self):
         """get_wrist_angles returns (flex, roll) tuple."""
@@ -976,6 +980,109 @@ class TestIMU:
         # Re-run parse with clamping check
         flex, _ = ctrl.get_wrist_angles()
         assert flex <= 90.0
+
+    def test_gyro_bytes_parsed(self):
+        """Gyroscope bytes 19-24 are parsed into raw gyro values."""
+        report = _make_full_report()
+        # gyro_x = 1000 (int16 LE), gyro_y = -500, gyro_z = 200
+        report[19] = 0xE8  # 1000 lo
+        report[20] = 0x03  # 1000 hi
+        report[21] = 0x0C  # -500 lo (0xFE0C)
+        report[22] = 0xFE  # -500 hi
+        report[23] = 0xC8  # 200 lo
+        report[24] = 0x00  # 200 hi
+        ctrl = _create_controller_with_fake_devices(
+            mode=JoyConMode.DUAL,
+            left_reports=[report],
+        )
+        assert ctrl.imu_gyro_x == 1000
+        assert ctrl.imu_gyro_y == -500
+        assert ctrl.imu_gyro_z == 200
+
+    def test_complementary_filter_initializes_from_accel(self):
+        """First frame: fused angle ≈ accel angle weighted by α (gyro starts from 0)."""
+        report = _make_full_report()
+        # acc_x = 4096, acc_z = 0 → accel pitch = 90°
+        report[13] = 0x00; report[14] = 0x10  # acc_x = 4096
+        report[15] = 0x00; report[16] = 0x00  # acc_y = 0
+        report[17] = 0x00; report[18] = 0x00  # acc_z = 0
+        # gyro all zero
+        for i in range(19, 25):
+            report[i] = 0x00
+        ctrl = _create_controller_with_fake_devices(
+            mode=JoyConMode.DUAL,
+            left_reports=[report],
+        )
+        # With α=0.02: fused = 0.02*90 + 0.98*0 = 1.8°
+        assert ctrl.imu_pitch == pytest.approx(1.8, abs=0.5)
+
+    def test_gyro_delta_zero_when_stationary(self):
+        """Two identical upright frames → delta near zero."""
+        report = _make_full_report()
+        report[13] = 0x00; report[14] = 0x00  # acc_x = 0
+        report[15] = 0x00; report[16] = 0x00  # acc_y = 0
+        report[17] = 0x00; report[18] = 0x10  # acc_z = 4096 (upright)
+        for i in range(19, 25):
+            report[i] = 0x00  # gyro = 0
+        ctrl = _create_controller_with_fake_devices(
+            mode=JoyConMode.DUAL,
+            left_reports=[report, report],
+        )
+        # After two identical upright frames, deltas should be near zero
+        assert abs(ctrl.gyro_pitch_delta) < 0.5
+        assert abs(ctrl.gyro_roll_delta) < 0.5
+
+    def test_gyro_delta_deadzone(self):
+        """Deltas below ±0.1° threshold are zeroed."""
+        ctrl = _create_controller_with_fake_devices(mode=JoyConMode.DUAL)
+        ctrl._prev_imu_pitch = 0.0
+        ctrl.imu_pitch = 0.05  # 0.05° change, below 0.1° deadzone
+        ctrl._prev_imu_roll = 0.0
+        ctrl.imu_roll = 0.05
+        ctrl._update_gyro_deltas()
+        assert ctrl.gyro_pitch_delta == 0.0
+        assert ctrl.gyro_roll_delta == 0.0
+
+    def test_gyro_delta_above_deadzone(self):
+        """Deltas above threshold pass through."""
+        ctrl = _create_controller_with_fake_devices(mode=JoyConMode.DUAL)
+        ctrl._prev_imu_pitch = 0.0
+        ctrl.imu_pitch = 2.0
+        ctrl._prev_imu_roll = 0.0
+        ctrl.imu_roll = -1.5
+        ctrl._update_gyro_deltas()
+        assert ctrl.gyro_pitch_delta == pytest.approx(2.0)
+        assert ctrl.gyro_roll_delta == pytest.approx(-1.5)
+
+    def test_filter_toggle_changes_alpha(self):
+        """toggle_filter() swaps between normal (0.02) and stabilized (0.005)."""
+        ctrl = _create_controller_with_fake_devices(mode=JoyConMode.DUAL)
+        assert ctrl.imu_filter_stabilized is False
+        assert ctrl._imu_filter_alpha == 0.02
+        ctrl.toggle_filter()
+        assert ctrl.imu_filter_stabilized is True
+        assert ctrl._imu_filter_alpha == 0.005
+        ctrl.toggle_filter()
+        assert ctrl.imu_filter_stabilized is False
+        assert ctrl._imu_filter_alpha == 0.02
+
+    def test_recalibrate_imu_resets_gyro_angles(self):
+        """recalibrate_imu() zeros the gyro-integrated pitch/roll."""
+        ctrl = _create_controller_with_fake_devices(mode=JoyConMode.DUAL)
+        ctrl._gyro_pitch_angle = 45.0
+        ctrl._gyro_roll_angle = -30.0
+        ctrl.recalibrate_imu()
+        assert ctrl._gyro_pitch_angle == 0.0
+        assert ctrl._gyro_roll_angle == 0.0
+
+    def test_get_gyro_deltas_returns_tuple(self):
+        """get_gyro_deltas returns (pitch_delta, roll_delta)."""
+        ctrl = _create_controller_with_fake_devices(mode=JoyConMode.DUAL)
+        ctrl.gyro_pitch_delta = 1.5
+        ctrl.gyro_roll_delta = -0.8
+        pd, rd = ctrl.get_gyro_deltas()
+        assert pd == 1.5
+        assert rd == -0.8
 
 
 # ── MappingEngine tests ────────────────────────────────────────────────────

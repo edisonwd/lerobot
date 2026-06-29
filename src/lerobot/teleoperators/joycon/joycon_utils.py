@@ -171,11 +171,13 @@ class JoyConHIDController(InputController):
         self.mode = mode
         self.deadzone = deadzone
 
-        # Speed and fine-tune
-        self.speed_multiplier: float = 1.0
+        # Speed: 3 discrete levels
+        self.speed_levels: list[float] = [0.5, 1.0, 1.5]  # fine, normal, fast
+        self.speed_level_index: int = 1  # start at normal
+        self.speed_multiplier: float = 1.0  # derived from speed_levels[index]
         self.min_speed = min_speed
         self.max_speed = max_speed
-        self.speed_step = speed_step
+        self.speed_step = speed_step  # kept for backward compat but unused in new system
         self.fine_tune: bool = False
         self.fine_tune_multiplier = fine_tune_multiplier
         self.rotation_step = rotation_step
@@ -231,6 +233,33 @@ class JoyConHIDController(InputController):
         self._imu_roll_offset: float = 0.0
         # EMA smoothing
         self._imu_alpha: float = 0.3  # smoothing factor (lower = smoother)
+
+        # IMU gyroscope raw values
+        self.imu_gyro_x: float = 0.0  # angular velocity X (raw LSB)
+        self.imu_gyro_y: float = 0.0  # angular velocity Y (raw LSB)
+        self.imu_gyro_z: float = 0.0  # angular velocity Z (raw LSB)
+
+        # Complementary filter state
+        self._gyro_pitch_angle: float = 0.0  # gyro-integrated pitch (degrees)
+        self._gyro_roll_angle: float = 0.0   # gyro-integrated roll (degrees)
+        self.imu_pitch: float = 0.0          # fused pitch angle (degrees)
+        self.imu_roll: float = 0.0           # fused roll angle (degrees)
+
+        # Delta computation
+        self.gyro_pitch_delta: float = 0.0
+        self.gyro_roll_delta: float = 0.0
+        self._prev_imu_pitch: float = 0.0
+        self._prev_imu_roll: float = 0.0
+        self._imu_last_time: float = 0.0
+
+        # Filter mode
+        self.imu_filter_stabilized: bool = False
+        self._imu_filter_alpha: float = 0.02   # normal mode
+        self._imu_alpha_stabilized: float = 0.005
+        self._imu_alpha_normal: float = 0.02
+
+        # Gyro deadzone (degrees)
+        self._gyro_delta_deadzone: float = 0.1
 
         # Mode switch retry counter (for background retry in update())
         self._mode_switch_retries: int = 0
@@ -895,26 +924,19 @@ class JoyConHIDController(InputController):
             self.episode_end_status = None
 
     def _handle_speed_buttons(self, btns: dict[str, bool]) -> None:
-        """Adjust speed multiplier via D-pad up/down (edge-triggered)."""
-        dpad_up = btns.get("up", False)
-        dpad_down = btns.get("down", False)
+        """Cycle through 3 speed levels on D-pad up (edge-triggered).
 
-        # Rising edge detection: only trigger on press, not hold
+        D-pad down is no longer handled here — it's a meta control
+        (reset_to_center) managed by JoyConTeleop.
+        """
+        dpad_up = btns.get("up", False)
+
         if dpad_up and not self._prev_dpad_up:
-            self.speed_multiplier = min(
-                self.max_speed,
-                round(self.speed_multiplier + self.speed_step, 2),
-            )
-            logger.info("Speed: %d%%", int(self.speed_multiplier * 100))
-        if dpad_down and not self._prev_dpad_down:
-            self.speed_multiplier = max(
-                self.min_speed,
-                round(self.speed_multiplier - self.speed_step, 2),
-            )
-            logger.info("Speed: %d%%", int(self.speed_multiplier * 100))
+            self.speed_level_index = (self.speed_level_index + 1) % len(self.speed_levels)
+            self.speed_multiplier = self.speed_levels[self.speed_level_index]
+            logger.info("Speed level: %d (%.1fx)", self.speed_level_index, self.speed_multiplier)
 
         self._prev_dpad_up = dpad_up
-        self._prev_dpad_down = dpad_down
 
     def _handle_fine_tune_toggle(self, btns: dict[str, bool]) -> None:
         """Toggle fine-tune mode via stick press (edge-triggered)."""
@@ -949,36 +971,117 @@ class JoyConHIDController(InputController):
             return -self.z_step_size
         return 0.0
 
-    # ── IMU accelerometer (wrist tilt control) ────────────────────────────
+    # ── IMU: accelerometer + gyroscope (complementary filter) ────────────
 
     def _parse_imu(self, data) -> None:
-        """Parse accelerometer data from the first IMU sample (bytes 13-18).
+        """Parse accelerometer + gyroscope data and run complementary filter.
 
-        Accelerometer values are int16 little-endian. The unit is approximately
-        1/4096 g per LSB (factory calibrated).
+        Accelerometer: bytes 13-18 (int16 LE, ~1/4096 g per LSB).
+        Gyroscope: bytes 19-24 (int16 LE, ~0.0027°/s per LSB).
+
+        Complementary filter:
+            fused = α * accel_angle + (1-α) * gyro_integrated_angle
         """
-        # Bytes 13-14: acc_x, 15-16: acc_y, 17-18: acc_z (int16 LE)
+        # ── Accelerometer (bytes 13-18) ──────────────────────────────
         raw_x = self._int16_le(data[13], data[14])
         raw_y = self._int16_le(data[15], data[16])
         raw_z = self._int16_le(data[17], data[18])
 
-        # EMA smoothing to reduce noise
+        # EMA smoothing (keep existing behavior)
         a = self._imu_alpha
         self.imu_acc_x = a * raw_x + (1 - a) * self.imu_acc_x
         self.imu_acc_y = a * raw_y + (1 - a) * self.imu_acc_y
         self.imu_acc_z = a * raw_z + (1 - a) * self.imu_acc_z
 
-        # Compute tilt angles (degrees) from accelerometer
-        # When Joy-Con is held upright (grip pointing down):
-        #   acc_z ≈ +4096 (1g), acc_x ≈ 0, acc_y ≈ 0
-        # Forward/backward tilt (wrist flex): rotation around X axis
-        flex = math.degrees(math.atan2(self.imu_acc_x, self.imu_acc_z))
-        # Left/right tilt (wrist roll): rotation around Y axis
-        roll = math.degrees(math.atan2(self.imu_acc_y, self.imu_acc_z))
+        # Accelerometer-based tilt angles
+        accel_pitch = math.degrees(math.atan2(self.imu_acc_x, self.imu_acc_z))
+        accel_roll = math.degrees(math.atan2(self.imu_acc_y, self.imu_acc_z))
 
-        # Apply calibration offsets and clamp to reasonable range
-        self.wrist_flex_angle = max(-90.0, min(90.0, flex - self._imu_flex_offset))
-        self.wrist_roll_angle = max(-90.0, min(90.0, roll - self._imu_roll_offset))
+        # ── Gyroscope (bytes 19-24) ─────────────────────────────────
+        self.imu_gyro_x = float(self._int16_le(data[19], data[20]))
+        self.imu_gyro_y = float(self._int16_le(data[21], data[22]))
+        self.imu_gyro_z = float(self._int16_le(data[23], data[24]))
+
+        # Compute dt from wall clock
+        now = time.monotonic()
+        if self._imu_last_time > 0:
+            dt = now - self._imu_last_time
+        else:
+            dt = 1.0 / 60.0  # assume 60Hz on first frame
+        self._imu_last_time = now
+
+        # Integrate gyroscope angular velocity → angle (degrees)
+        # gyro_y → pitch, gyro_x → roll (matching Joy-Con axis convention)
+        gyro_dps_scale = 0.0027  # °/s per LSB at ±2000°/s range
+        self._gyro_pitch_angle += self.imu_gyro_y * gyro_dps_scale * dt
+        self._gyro_roll_angle += self.imu_gyro_x * gyro_dps_scale * dt
+
+        # ── Complementary filter ─────────────────────────────────────
+        alpha = self._imu_filter_alpha
+        self.imu_pitch = alpha * accel_pitch + (1 - alpha) * self._gyro_pitch_angle
+        self.imu_roll = alpha * accel_roll + (1 - alpha) * self._gyro_roll_angle
+
+        # Apply calibration offsets and clamp
+        self.imu_pitch = max(-90.0, min(90.0, self.imu_pitch - self._imu_flex_offset))
+        self.imu_roll = max(-90.0, min(90.0, self.imu_roll - self._imu_roll_offset))
+
+        # Keep backward-compatible wrist angle aliases
+        self.wrist_flex_angle = self.imu_pitch
+        self.wrist_roll_angle = self.imu_roll
+
+        # ── Delta computation ────────────────────────────────────────
+        self._update_gyro_deltas()
+
+    def _update_gyro_deltas(self) -> None:
+        """Compute per-frame angle deltas with deadzone."""
+        raw_pitch_delta = self.imu_pitch - self._prev_imu_pitch
+        raw_roll_delta = self.imu_roll - self._prev_imu_roll
+
+        # Apply deadzone
+        if abs(raw_pitch_delta) < self._gyro_delta_deadzone:
+            raw_pitch_delta = 0.0
+        if abs(raw_roll_delta) < self._gyro_delta_deadzone:
+            raw_roll_delta = 0.0
+
+        self.gyro_pitch_delta = raw_pitch_delta
+        self.gyro_roll_delta = raw_roll_delta
+        self._prev_imu_pitch = self.imu_pitch
+        self._prev_imu_roll = self.imu_roll
+
+    def toggle_filter(self) -> None:
+        """Toggle between normal (α=0.02) and stabilized (α=0.005) filter."""
+        self.imu_filter_stabilized = not self.imu_filter_stabilized
+        if self.imu_filter_stabilized:
+            self._imu_filter_alpha = self._imu_alpha_stabilized
+        else:
+            self._imu_filter_alpha = self._imu_alpha_normal
+        mode = "stabilized" if self.imu_filter_stabilized else "normal"
+        logger.info("IMU filter: %s (α=%.3f)", mode, self._imu_filter_alpha)
+
+    def recalibrate_imu(self) -> None:
+        """Re-zero gyro integrated angles and delta state.
+
+        Call at runtime (e.g., D-pad ←) to eliminate accumulated drift.
+        Unlike calibrate_imu(), this does NOT sample hardware — it just
+        resets the internal state.
+        """
+        self._gyro_pitch_angle = 0.0
+        self._gyro_roll_angle = 0.0
+        self.imu_pitch = 0.0
+        self.imu_roll = 0.0
+        self._prev_imu_pitch = 0.0
+        self._prev_imu_roll = 0.0
+        self.gyro_pitch_delta = 0.0
+        self.gyro_roll_delta = 0.0
+        logger.info("IMU recalibrated: gyro angles zeroed.")
+
+    def get_gyro_deltas(self) -> tuple[float, float]:
+        """Get per-frame gyro angle deltas.
+
+        Returns:
+            (pitch_delta, roll_delta) in degrees.
+        """
+        return self.gyro_pitch_delta, self.gyro_roll_delta
 
     def _int16_le(self, lo: int, hi: int) -> int:
         """Decode a signed 16-bit little-endian value."""
@@ -1026,6 +1129,11 @@ class JoyConHIDController(InputController):
                 self._imu_roll_offset,
                 count,
             )
+        # Also reset gyro integration state
+        self._gyro_pitch_angle = 0.0
+        self._gyro_roll_angle = 0.0
+        self._prev_imu_pitch = 0.0
+        self._prev_imu_roll = 0.0
 
     def get_wrist_angles(self) -> tuple[float, float]:
         """Get wrist tilt angles from IMU accelerometer.
