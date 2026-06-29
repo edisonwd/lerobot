@@ -1560,6 +1560,8 @@ class TestJoyConTeleopMappingIntegration:
             "up": False, "down": False, "left": False, "right": False,
             "plus": False, "minus": False, "home": False, "capture": False,
             "l_stick_press": False, "r_stick_press": False,
+            "sl_right": False, "sl_left": False,
+            "sr_right": False, "sr_left": False,
         }
         ctrl.get_raw_left_stick.return_value = (0.0, 0.0)
         ctrl.get_raw_right_stick.return_value = (0.0, 0.0)
@@ -1568,6 +1570,10 @@ class TestJoyConTeleopMappingIntegration:
         ctrl.speed_levels = [0.5, 1.0, 1.5]
         ctrl.speed_level_index = 1
         ctrl.fine_tune = False
+        ctrl.imu_pitch = 0.0
+        ctrl.imu_roll = 0.0
+        ctrl.gyro_pitch_delta = 0.0
+        ctrl.gyro_roll_delta = 0.0
         ctrl.update = MagicMock()
 
         teleop.controller = ctrl
@@ -1627,3 +1633,107 @@ class TestJoyConTeleopMappingIntegration:
         teleop.controller.buttons["l_stick_press"] = True
         teleop.get_action()
         assert teleop.controller.fine_tune is True
+
+    def test_build_input_state_includes_gyro(self):
+        """_build_input_state includes gyro_pitch_delta and gyro_roll_delta."""
+        teleop = self._make_teleop_with_mock_controller()
+        teleop.controller.gyro_pitch_delta = 1.5
+        teleop.controller.gyro_roll_delta = -0.8
+        teleop.controller.imu_pitch = 10.0
+        state = teleop._build_input_state()
+        assert state["gyro_pitch_delta"] == 1.5
+        assert state["gyro_roll_delta"] == -0.8
+        assert state["imu_pitch"] == 10.0
+
+    def test_pose_lock_freezes_targets(self):
+        """When pose_locked is True, get_action returns frozen targets."""
+        teleop = self._make_teleop_with_mock_controller()
+        teleop.init_targets({
+            "shoulder_pan.pos": 45.0, "shoulder_lift.pos": -30.0,
+            "elbow_flex.pos": 10.0, "wrist_flex.pos": 5.0,
+            "wrist_roll.pos": -20.0, "gripper.pos": 50.0,
+        })
+        teleop._pose_locked = True
+        teleop.controller.get_raw_left_stick.return_value = (1.0, 1.0)
+        action = teleop.get_action()
+        assert action["shoulder_pan.pos"] == 45.0  # frozen
+
+    def test_pose_lock_toggle_via_meta_control(self):
+        """D-pad right toggles pose lock (edge-triggered)."""
+        teleop = self._make_teleop_with_mock_controller()
+        assert teleop._pose_locked is False
+        teleop.controller.buttons["right"] = True
+        teleop.get_action()
+        assert teleop._pose_locked is True
+        # Toggle off
+        for k in teleop.controller.buttons:
+            teleop.controller.buttons[k] = False
+        teleop.get_action()
+        teleop.controller.buttons["right"] = True
+        teleop.get_action()
+        assert teleop._pose_locked is False
+
+    def test_reset_to_center(self):
+        """D-pad down resets all targets to zero."""
+        teleop = self._make_teleop_with_mock_controller()
+        teleop.init_targets({
+            "shoulder_pan.pos": 45.0, "shoulder_lift.pos": -30.0,
+            "elbow_flex.pos": 10.0, "wrist_flex.pos": 5.0,
+            "wrist_roll.pos": -20.0, "gripper.pos": 50.0,
+        })
+        teleop.controller.buttons["down"] = True
+        teleop.get_action()
+        assert teleop._current_targets["shoulder_pan"] == 0.0
+        assert teleop._current_targets["shoulder_lift"] == 0.0
+        assert teleop._current_targets["elbow_flex"] == 0.0
+
+    def test_preset_pickup_via_b_button(self):
+        """B button applies 'pickup' preset."""
+        teleop = self._make_teleop_with_mock_controller()
+        teleop.mapping_engine.presets = {
+            "pickup": {"shoulder_lift": -30.0, "elbow_flex": 45.0},
+        }
+        teleop.init_targets({
+            "shoulder_pan.pos": 0.0, "shoulder_lift.pos": 0.0,
+            "elbow_flex.pos": 0.0, "wrist_flex.pos": 0.0,
+            "wrist_roll.pos": 0.0, "gripper.pos": 50.0,
+        })
+        teleop.controller.buttons["b"] = True
+        teleop.get_action()
+        assert teleop._current_targets["shoulder_lift"] == -30.0
+        assert teleop._current_targets["elbow_flex"] == 45.0
+        assert teleop._current_targets["shoulder_pan"] == 0.0
+
+    def test_recalibrate_imu_via_meta_control(self):
+        """D-pad left triggers IMU recalibration."""
+        teleop = self._make_teleop_with_mock_controller()
+        teleop.controller.buttons["left"] = True
+        teleop.get_action()
+        teleop.controller.recalibrate_imu.assert_called_once()
+
+    def test_filter_toggle_via_meta_control(self):
+        """SR toggles IMU filter mode."""
+        teleop = self._make_teleop_with_mock_controller()
+        teleop.controller.buttons["sr_right"] = True
+        teleop.get_action()
+        teleop.controller.toggle_filter.assert_called_once()
+
+    def test_gripper_toggle_via_y_button(self):
+        """Y button toggles gripper between fully open (100) and closed (0)."""
+        teleop = self._make_teleop_with_mock_controller()
+        teleop.init_targets({
+            "shoulder_pan.pos": 0.0, "shoulder_lift.pos": 0.0,
+            "elbow_flex.pos": 0.0, "wrist_flex.pos": 0.0,
+            "wrist_roll.pos": 0.0, "gripper.pos": 50.0,
+        })
+        # Press Y → gripper opens (100)
+        teleop.controller.buttons["y"] = True
+        teleop.get_action()
+        assert teleop._current_targets["gripper"] == 100.0
+        # Release Y
+        teleop.controller.buttons["y"] = False
+        teleop.get_action()
+        # Press Y again → gripper closes (0)
+        teleop.controller.buttons["y"] = True
+        teleop.get_action()
+        assert teleop._current_targets["gripper"] == 0.0
