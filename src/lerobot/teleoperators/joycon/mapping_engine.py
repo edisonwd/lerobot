@@ -61,6 +61,15 @@ VALID_INPUTS = {
     # IMU
     "imu_tilt",
     "imu_roll",
+    "imu_pitch",
+    "imu_roll_fused",
+    "gyro_pitch_delta",
+    "gyro_roll_delta",
+    # Side-specific SL/SR buttons (for mode switch and filter toggle)
+    "sl_right",
+    "sl_left",
+    "sr_right",
+    "sr_left",
 }
 
 
@@ -92,11 +101,20 @@ class MetaControls:
     """Configurable meta-control button assignments."""
 
     speed_up: str = "dpad_up"
-    speed_down: str = "dpad_down"
     fine_tune_toggle: str = "l_stick_press"
+    # New fields:
+    reset_to_center: str = "dpad_down"
+    recalibrate_imu: str = "dpad_left"
+    pose_lock: str = "dpad_right"
+    mode_switch: str = "sl_right"
+    filter_toggle: str = "sr_right"
 
     def __post_init__(self):
-        for name in ("speed_up", "speed_down", "fine_tune_toggle"):
+        field_names = (
+            "speed_up", "fine_tune_toggle", "reset_to_center",
+            "recalibrate_imu", "pose_lock", "mode_switch", "filter_toggle",
+        )
+        for name in field_names:
             val = getattr(self, name)
             if val not in VALID_INPUTS:
                 raise ValueError(f"meta_controls.{name}: unknown input {val!r}")
@@ -127,10 +145,12 @@ class MappingEngine:
         mappings: list[MappingEntry],
         meta_controls: MetaControls,
         joint_limits: dict[str, tuple[float, float]],
+        presets: dict[str, dict[str, float]] | None = None,
     ):
         self.mappings = mappings
         self.meta_controls = meta_controls
         self.joint_limits = joint_limits
+        self.presets: dict[str, dict[str, float]] = presets or {}
 
         for entry in mappings:
             if entry.motor not in joint_limits:
@@ -195,6 +215,34 @@ class MappingEngine:
 
         return targets
 
+    def apply_preset(
+        self,
+        preset_name: str,
+        current_targets: dict[str, float],
+    ) -> dict[str, float]:
+        """Apply a named preset to current targets.
+
+        Only motors listed in the preset are changed; others stay.
+        All values are clamped to joint limits.
+
+        Returns:
+            Updated targets dict (new dict, original unchanged).
+        """
+        if preset_name not in self.presets:
+            logger.warning("Unknown preset: %r", preset_name)
+            return dict(current_targets)
+
+        targets = dict(current_targets)
+        for motor, value in self.presets[preset_name].items():
+            if motor in self.joint_limits:
+                lo, hi = self.joint_limits[motor]
+                targets[motor] = max(lo, min(hi, value))
+            else:
+                logger.warning("Preset motor %r not in joint_limits, skipping.", motor)
+
+        logger.info("Applied preset %r: %s", preset_name, self.presets[preset_name])
+        return targets
+
     @classmethod
     def from_yaml(cls, path: str | Path, joint_limits: dict) -> MappingEngine:
         """Load mapping configuration from a YAML file."""
@@ -216,17 +264,23 @@ class MappingEngine:
         meta_data = data.get("meta_controls", {})
         meta = MetaControls(
             speed_up=meta_data.get("speed_up", "dpad_up"),
-            speed_down=meta_data.get("speed_down", "dpad_down"),
             fine_tune_toggle=meta_data.get("fine_tune_toggle", "l_stick_press"),
+            reset_to_center=meta_data.get("reset_to_center", "dpad_down"),
+            recalibrate_imu=meta_data.get("recalibrate_imu", "dpad_left"),
+            pose_lock=meta_data.get("pose_lock", "dpad_right"),
+            mode_switch=meta_data.get("mode_switch", "sl_right"),
+            filter_toggle=meta_data.get("filter_toggle", "sr_right"),
         )
 
+        presets = data.get("presets", {})
+
         logger.info(
-            "Loaded mapping from %s: %d entries, %d motors",
-            path, len(mappings), len(set(e.motor for e in mappings)),
+            "Loaded mapping from %s: %d entries, %d motors, %d presets",
+            path, len(mappings), len(set(e.motor for e in mappings)), len(presets),
         )
-        return cls(mappings, meta, joint_limits)
+        return cls(mappings, meta, joint_limits, presets=presets)
 
     @classmethod
     def default(cls, joint_limits: dict) -> MappingEngine:
         """Create engine with built-in default mapping."""
-        return cls(list(_DEFAULT_MAPPINGS), MetaControls(), joint_limits)
+        return cls(list(_DEFAULT_MAPPINGS), MetaControls(), joint_limits, presets={})

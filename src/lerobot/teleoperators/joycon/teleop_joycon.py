@@ -78,7 +78,6 @@ class JoyConTeleop(Teleoperator):
         self.mapping_engine: MappingEngine | None = None
         self._current_targets: dict[str, float] = {}
         self._prev_speed_up: bool = False
-        self._prev_speed_down: bool = False
         self._prev_fine_tune: bool = False
 
     # ── Action / feedback descriptors ────────────────────────────────────────
@@ -155,7 +154,6 @@ class JoyConTeleop(Teleoperator):
         # Initialize state
         self._current_targets = {}
         self._prev_speed_up = False
-        self._prev_speed_down = False
         self._prev_fine_tune = False
 
         logger.info(
@@ -268,24 +266,16 @@ class JoyConTeleop(Teleoperator):
         meta = self.mapping_engine.meta_controls
 
         speed_up = input_state.get(meta.speed_up, False)
-        speed_down = input_state.get(meta.speed_down, False)
         fine_toggle = input_state.get(meta.fine_tune_toggle, False)
 
         if speed_up and not self._prev_speed_up:
-            self.controller.speed_multiplier = min(
-                self.controller.speed_multiplier + self.config.speed_step,
-                self.config.max_speed,
-            )
-        if speed_down and not self._prev_speed_down:
-            self.controller.speed_multiplier = max(
-                self.controller.speed_multiplier - self.config.speed_step,
-                self.config.min_speed,
-            )
+            ctrl = self.controller
+            ctrl.speed_level_index = (ctrl.speed_level_index + 1) % len(ctrl.speed_levels)
+            ctrl.speed_multiplier = ctrl.speed_levels[ctrl.speed_level_index]
         if fine_toggle and not self._prev_fine_tune:
             self.controller.fine_tune = not self.controller.fine_tune
 
         self._prev_speed_up = speed_up
-        self._prev_speed_down = speed_down
         self._prev_fine_tune = fine_toggle
 
     def get_teleop_events(self) -> dict[str, Any]:

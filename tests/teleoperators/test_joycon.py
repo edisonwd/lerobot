@@ -1147,16 +1147,185 @@ class TestMetaControls:
     def test_defaults(self):
         m = MetaControls()
         assert m.speed_up == "dpad_up"
-        assert m.speed_down == "dpad_down"
         assert m.fine_tune_toggle == "l_stick_press"
+        assert m.reset_to_center == "dpad_down"
+        assert m.recalibrate_imu == "dpad_left"
+        assert m.pose_lock == "dpad_right"
+        assert m.mode_switch == "sl_right"
+        assert m.filter_toggle == "sr_right"
+
+    def test_speed_down_removed(self):
+        """MetaControls no longer has speed_down field."""
+        m = MetaControls()
+        assert not hasattr(m, "speed_down")
 
     def test_custom_buttons(self):
-        m = MetaControls(speed_up="r", speed_down="zr", fine_tune_toggle="r_stick_press")
+        m = MetaControls(speed_up="r", mode_switch="sl_left", fine_tune_toggle="r_stick_press")
         assert m.speed_up == "r"
+        assert m.mode_switch == "sl_left"
 
     def test_invalid_input_raises(self):
         with pytest.raises(ValueError, match="unknown input"):
             MetaControls(speed_up="fake_button")
+
+
+class TestGyroInputs:
+    """Test gyro inputs flow through MappingEngine."""
+
+    def test_gyro_inputs_in_valid_inputs(self):
+        assert "gyro_pitch_delta" in VALID_INPUTS
+        assert "gyro_roll_delta" in VALID_INPUTS
+        assert "imu_pitch" in VALID_INPUTS
+        assert "sl_right" in VALID_INPUTS
+        assert "sl_left" in VALID_INPUTS
+        assert "sr_right" in VALID_INPUTS
+        assert "sr_left" in VALID_INPUTS
+
+    def test_gyro_delta_incremental(self):
+        """gyro_pitch_delta flows through incremental mode with per-axis gain."""
+        engine = MappingEngine(
+            [MappingEntry("gyro_pitch_delta", "shoulder_lift", "incremental", speed=0.55)],
+            MetaControls(),
+            SO101_JOINT_LIMITS,
+        )
+        result = engine.compute_targets(
+            {"gyro_pitch_delta": 2.0},
+            {"shoulder_lift": 10.0},
+        )
+        assert result["shoulder_lift"] == pytest.approx(11.1)  # 10 + 2.0*0.55
+
+    def test_gyro_delta_with_invert(self):
+        """Inverted gyro delta (forward tilt → arm down)."""
+        engine = MappingEngine(
+            [MappingEntry("gyro_pitch_delta", "shoulder_lift", "incremental", speed=0.55, invert=True)],
+            MetaControls(),
+            SO101_JOINT_LIMITS,
+        )
+        result = engine.compute_targets(
+            {"gyro_pitch_delta": 2.0},
+            {"shoulder_lift": 10.0},
+        )
+        assert result["shoulder_lift"] == pytest.approx(8.9)  # 10 - 2.0*0.55
+
+    def test_gyro_delta_zero_no_movement(self):
+        """Zero gyro delta → no change."""
+        engine = MappingEngine(
+            [MappingEntry("gyro_pitch_delta", "shoulder_lift", "incremental", speed=0.55)],
+            MetaControls(),
+            SO101_JOINT_LIMITS,
+        )
+        result = engine.compute_targets(
+            {"gyro_pitch_delta": 0.0},
+            {"shoulder_lift": 10.0},
+        )
+        assert result["shoulder_lift"] == pytest.approx(10.0)
+
+    def test_gyro_and_stick_same_motor(self):
+        """Both gyro delta and stick map to same motor — deltas accumulate."""
+        engine = MappingEngine(
+            [
+                MappingEntry("gyro_pitch_delta", "shoulder_lift", "incremental", speed=0.55),
+                MappingEntry("left_stick_y", "shoulder_lift", "incremental", speed=0.8),
+            ],
+            MetaControls(),
+            SO101_JOINT_LIMITS,
+        )
+        result = engine.compute_targets(
+            {"gyro_pitch_delta": 1.0, "left_stick_y": 0.5},
+            {"shoulder_lift": 0.0},
+        )
+        # 0 + 1.0*0.55 + 0.5*0.8 = 0.95
+        assert result["shoulder_lift"] == pytest.approx(0.95)
+
+
+class TestPresets:
+    """Test preset loading and access."""
+
+    def test_presets_loaded_from_yaml(self, tmp_path):
+        yaml_content = """\
+mappings:
+  - input: left_stick_x
+    motor: shoulder_pan
+    control: incremental
+presets:
+  pickup:
+    shoulder_lift: -30.0
+    elbow_flex: 45.0
+  place:
+    shoulder_lift: 30.0
+"""
+        yaml_file = tmp_path / "test_presets.yaml"
+        yaml_file.write_text(yaml_content)
+        engine = MappingEngine.from_yaml(yaml_file, SO101_JOINT_LIMITS)
+        assert "pickup" in engine.presets
+        assert engine.presets["pickup"]["shoulder_lift"] == -30.0
+        assert engine.presets["pickup"]["elbow_flex"] == 45.0
+        assert "place" in engine.presets
+
+    def test_presets_empty_when_not_in_yaml(self, tmp_path):
+        yaml_content = """\
+mappings:
+  - input: left_stick_x
+    motor: shoulder_pan
+    control: incremental
+"""
+        yaml_file = tmp_path / "test_no_presets.yaml"
+        yaml_file.write_text(yaml_content)
+        engine = MappingEngine.from_yaml(yaml_file, SO101_JOINT_LIMITS)
+        assert engine.presets == {}
+
+    def test_default_mapping_has_no_presets(self):
+        engine = MappingEngine.default(SO101_JOINT_LIMITS)
+        assert engine.presets == {}
+
+    def test_apply_preset(self):
+        """apply_preset updates only specified motors, clamps to limits."""
+        engine = MappingEngine(
+            [MappingEntry("left_stick_x", "shoulder_pan", "incremental")],
+            MetaControls(),
+            SO101_JOINT_LIMITS,
+        )
+        engine.presets = {
+            "pickup": {"shoulder_lift": -30.0, "elbow_flex": 45.0, "wrist_flex": -20.0},
+        }
+        current = {
+            "shoulder_pan": 10.0,
+            "shoulder_lift": 0.0,
+            "elbow_flex": 0.0,
+            "wrist_flex": 0.0,
+            "wrist_roll": 0.0,
+            "gripper": 50.0,
+        }
+        result = engine.apply_preset("pickup", current)
+        assert result["shoulder_lift"] == -30.0
+        assert result["elbow_flex"] == 45.0
+        assert result["wrist_flex"] == -20.0
+        # Unchanged motors keep their values
+        assert result["shoulder_pan"] == 10.0
+        assert result["wrist_roll"] == 0.0
+        assert result["gripper"] == 50.0
+
+    def test_apply_preset_clamps_to_limits(self):
+        """Preset values are clamped to joint limits."""
+        engine = MappingEngine(
+            [MappingEntry("left_stick_x", "shoulder_pan", "incremental")],
+            MetaControls(),
+            SO101_JOINT_LIMITS,
+        )
+        engine.presets = {"test": {"shoulder_lift": 200.0}}  # exceeds 100° limit
+        result = engine.apply_preset("test", {"shoulder_lift": 0.0})
+        assert result["shoulder_lift"] == 100.0  # clamped
+
+    def test_apply_preset_unknown_name_returns_unchanged(self):
+        """Unknown preset name returns targets unchanged."""
+        engine = MappingEngine(
+            [MappingEntry("left_stick_x", "shoulder_pan", "incremental")],
+            MetaControls(),
+            SO101_JOINT_LIMITS,
+        )
+        current = {"shoulder_pan": 10.0}
+        result = engine.apply_preset("nonexistent", current)
+        assert result == current
 
 
 class TestComputeTargets:
@@ -1335,7 +1504,7 @@ mappings:
     scale: 0.3
 meta_controls:
   speed_up: r
-  speed_down: zr
+  mode_switch: sl_left
   fine_tune_toggle: r_stick_press
 """
         yaml_file = tmp_path / "test_mapping.yaml"
@@ -1358,7 +1527,7 @@ mappings:
         yaml_file.write_text(yaml_content)
         engine = MappingEngine.from_yaml(yaml_file, SO101_JOINT_LIMITS)
         assert engine.meta_controls.speed_up == "dpad_up"
-        assert engine.meta_controls.speed_down == "dpad_down"
+        assert engine.meta_controls.reset_to_center == "dpad_down"
 
     def test_default_mapping_covers_all_motors(self):
         engine = MappingEngine.default(SO101_JOINT_LIMITS)
@@ -1396,6 +1565,8 @@ class TestJoyConTeleopMappingIntegration:
         ctrl.get_raw_right_stick.return_value = (0.0, 0.0)
         ctrl.get_wrist_angles.return_value = (0.0, 0.0)
         ctrl.speed_multiplier = 1.0
+        ctrl.speed_levels = [0.5, 1.0, 1.5]
+        ctrl.speed_level_index = 1
         ctrl.fine_tune = False
         ctrl.update = MagicMock()
 
@@ -1403,7 +1574,6 @@ class TestJoyConTeleopMappingIntegration:
         teleop.mapping_engine = MappingEngine.default(SO101_JOINT_LIMITS)
         teleop._current_targets = {m: 0.0 for m in teleop.mapping_engine.motors}
         teleop._prev_speed_up = False
-        teleop._prev_speed_down = False
         teleop._prev_fine_tune = False
         return teleop
 
@@ -1449,7 +1619,7 @@ class TestJoyConTeleopMappingIntegration:
         teleop = self._make_teleop_with_mock_controller()
         teleop.controller.buttons["up"] = True
         teleop.get_action()
-        assert teleop.controller.speed_multiplier == pytest.approx(1.2)
+        assert teleop.controller.speed_multiplier == pytest.approx(1.5)  # next level
 
     def test_meta_fine_tune_toggle(self):
         teleop = self._make_teleop_with_mock_controller()
