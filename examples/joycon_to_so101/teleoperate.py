@@ -50,6 +50,7 @@ def teleoperate(
     port: str,
     mode: str = "auto",
     mapping_path: str | None = None,
+    alt_mapping_path: str | None = None,
     fps: int = 30,
 ):
     """Run Joy-Con teleoperation with configurable mapping."""
@@ -59,6 +60,7 @@ def teleoperate(
     teleop_config = JoyConTeleopConfig(
         mode=joycon_mode,
         mapping_path=mapping_path,
+        alt_mapping_path=alt_mapping_path,
     )
     follower_config = SO100FollowerConfig(
         port=port,
@@ -92,18 +94,24 @@ def teleoperate(
     signal.signal(signal.SIGINT, handle_signal)
 
     print("\n" + "=" * 50)
-    print("  SO-101 Joy-Con Teleop (configurable mapping)")
+    print("  SO-101 Joy-Con Teleop (gyro-primary)")
     print("=" * 50)
-    print(f"  Mapping: {mapping_path or 'built-in default'}")
-    print(f"  Motors:  {', '.join(teleop.mapping_engine.motors)}")
-    print(f"  FPS:     {fps}")
+    print(f"  Mapping:      {mapping_path or 'built-in default'}")
+    print(f"  Alt mapping:  {alt_mapping_path or 'none'}")
+    print(f"  Motors:       {', '.join(teleop.mapping_engine.motors)}")
+    print(f"  FPS:          {fps}")
     print()
-    print("  Home       → Emergency stop")
-    print("  Plus (+)   → SUCCESS")
-    print("  Minus (-)  → FAILURE")
-    print(f"  {teleop.mapping_engine.meta_controls.speed_up:12s} → Speed +20%")
-    print(f"  {teleop.mapping_engine.meta_controls.speed_down:12s} → Speed -20%")
-    print(f"  {teleop.mapping_engine.meta_controls.fine_tune_toggle:12s} → Fine-tune toggle")
+    if alt_mapping_path:
+        print("  SL           → Toggle gyro/stick mode")
+    print("  SR           → Toggle IMU filter (normal/stabilized)")
+    print("  D-pad ↑      → Speed level cycle")
+    print("  D-pad ↓      → Reset to center")
+    print("  D-pad ←      → Recalibrate IMU")
+    print("  D-pad →      → Pose lock toggle")
+    print("  B / X        → Pickup / Place preset")
+    print("  Y            → Gripper toggle")
+    print("  A / Home     → Emergency stop")
+    print("  Plus/Minus   → Episode success/failure")
     print("=" * 50 + "\n")
 
     loop_period = 1.0 / fps
@@ -120,12 +128,13 @@ def teleoperate(
                 print("\n🛑 EMERGENCY STOP")
                 break
 
-            # Print speed/fine-tune changes
+            # Print state changes
             cur_speed = events.get("speed_multiplier", 1.0)
             cur_fine = events.get("fine_tune", False)
+            cur_mode = getattr(teleop, '_active_mode', 'gyro')
             if cur_speed != last_speed or cur_fine != last_fine_tune:
                 ft_str = "ON" if cur_fine else "OFF"
-                print(f"  Speed: {int(cur_speed * 100)}% | Fine-tune: {ft_str}")
+                print(f"  Speed: {cur_speed:.1f}x | Fine: {ft_str} | Mode: {cur_mode}")
                 last_speed = cur_speed
                 last_fine_tune = cur_fine
 
@@ -162,6 +171,11 @@ def main():
         default=None,
         help="Path to mapping YAML file (default: built-in)",
     )
+    parser.add_argument(
+        "--alt-mapping",
+        default=None,
+        help="Path to alternate mapping YAML (stick mode, toggled by SL)",
+    )
     parser.add_argument("--fps", type=int, default=30, help="Control loop frequency")
 
     args = parser.parse_args()
@@ -170,6 +184,7 @@ def main():
         port=args.port,
         mode=args.mode,
         mapping_path=args.mapping,
+        alt_mapping_path=args.alt_mapping,
         fps=args.fps,
     )
 
