@@ -1,0 +1,77 @@
+# SO101 Joy-Con 陀螺仪姿态主控映射
+# 单只 Joy-Con（左或右），陀螺仪控制大臂和肘部，摇杆辅助微调
+
+mappings:
+  # 轴 1: 底座旋转 — 左摇杆 X
+  - input: left_stick_x
+    motor: shoulder_pan
+    control: incremental
+    speed: 1.5
+
+  # 轴 2: 大臂升降 — 陀螺仪俯仰增量（主控）
+  - input: gyro_pitch_delta
+    motor: shoulder_lift
+    control: incremental
+    speed: 0.55
+    invert: true              # 前倾 → 大臂下压
+
+  # 轴 2 微调 — 左摇杆 Y
+  - input: left_stick_y
+    motor: shoulder_lift
+    control: incremental
+    speed: 0.8
+
+  # 轴 3: 肘部屈伸 — 陀螺仪横滚增量（主控）
+  - input: gyro_roll_delta
+    motor: elbow_flex
+    control: incremental
+    speed: 0.95
+
+  # 轴 4: 腕部俯仰 — 右摇杆 Y
+  - input: right_stick_y
+    motor: wrist_flex
+    control: incremental
+    speed: 1.15
+
+  # 轴 5: 腕部自转 — ZL(逆时针) / ZR(顺时针)
+  - input: zl
+    motor: wrist_roll
+    control: incremental
+    speed: 1.15
+    invert: true
+
+  - input: zr
+    motor: wrist_roll
+    control: incremental
+    speed: 1.15
+
+  # 轴 6: 夹爪 — L(闭合) / R(张开)
+  - input: l
+    motor: gripper
+    control: incremental
+    speed: 3.0
+
+  - input: r
+    motor: gripper
+    control: incremental
+    speed: 3.0
+    invert: true
+
+meta_controls:
+  speed_up: dpad_up
+  reset_to_center: dpad_down
+  recalibrate_imu: dpad_left
+  pose_lock: dpad_right
+  mode_switch: sl_right
+  filter_toggle: sr_right
+  fine_tune_toggle: l_stick_press
+
+presets:
+  pickup:
+    shoulder_lift: -30.0
+    elbow_flex: 45.0
+    wrist_flex: -20.0
+  place:
+    shoulder_lift: 30.0
+    elbow_flex: -20.0
+    wrist_flex: 10.0
