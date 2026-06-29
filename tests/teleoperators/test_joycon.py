@@ -1023,9 +1023,12 @@ class TestIMU:
         """First frame: fused angle ≈ accel angle weighted by α (gyro starts from 0)."""
         report = _make_full_report()
         # acc_x = 4096, acc_z = 0 → accel pitch = 90°
-        report[13] = 0x00; report[14] = 0x10  # acc_x = 4096
-        report[15] = 0x00; report[16] = 0x00  # acc_y = 0
-        report[17] = 0x00; report[18] = 0x00  # acc_z = 0
+        report[13] = 0x00
+        report[14] = 0x10  # acc_x = 4096
+        report[15] = 0x00
+        report[16] = 0x00  # acc_y = 0
+        report[17] = 0x00
+        report[18] = 0x00  # acc_z = 0
         # gyro all zero
         for i in range(19, 25):
             report[i] = 0x00
@@ -1039,9 +1042,12 @@ class TestIMU:
     def test_gyro_delta_zero_when_stationary(self):
         """Two identical upright frames → delta near zero."""
         report = _make_full_report()
-        report[13] = 0x00; report[14] = 0x00  # acc_x = 0
-        report[15] = 0x00; report[16] = 0x00  # acc_y = 0
-        report[17] = 0x00; report[18] = 0x10  # acc_z = 4096 (upright)
+        report[13] = 0x00
+        report[14] = 0x00  # acc_x = 0
+        report[15] = 0x00
+        report[16] = 0x00  # acc_y = 0
+        report[17] = 0x00
+        report[18] = 0x10  # acc_z = 4096 (upright)
         for i in range(19, 25):
             report[i] = 0x00  # gyro = 0
         ctrl = _create_controller_with_fake_devices(
@@ -1578,7 +1584,7 @@ class TestJoyConTeleopMappingIntegration:
 
         teleop.controller = ctrl
         teleop.mapping_engine = MappingEngine.default(SO101_JOINT_LIMITS)
-        teleop._current_targets = {m: 0.0 for m in teleop.mapping_engine.motors}
+        teleop._current_targets = dict.fromkeys(teleop.mapping_engine.motors, 0.0)
         teleop._prev_speed_up = False
         teleop._prev_fine_tune = False
         return teleop

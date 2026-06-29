@@ -1004,10 +1004,7 @@ class JoyConHIDController(InputController):
 
         # Compute dt from wall clock
         now = time.monotonic()
-        if self._imu_last_time > 0:
-            dt = now - self._imu_last_time
-        else:
-            dt = 1.0 / 60.0  # assume 60Hz on first frame
+        dt = now - self._imu_last_time if self._imu_last_time > 0 else 1.0 / 60.0
         self._imu_last_time = now
 
         # Integrate gyroscope angular velocity → angle (degrees)

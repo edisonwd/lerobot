@@ -276,7 +276,7 @@ class MappingEngine:
 
         logger.info(
             "Loaded mapping from %s: %d entries, %d motors, %d presets",
-            path, len(mappings), len(set(e.motor for e in mappings)), len(presets),
+            path, len(mappings), len({e.motor for e in mappings}), len(presets),
         )
         return cls(mappings, meta, joint_limits, presets=presets)
 
