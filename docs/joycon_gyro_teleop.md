@@ -55,14 +55,14 @@ for d in hid.enumerate():
 
 ```bash
 uv run python examples/joycon_to_so101/teleoperate.py \
-    --port=/dev/tty.usbmodem*
+    --port=/dev/tty.usbmodem5B7B0137181
 ```
 
 ### 陀螺仪主控模式
 
 ```bash
 uv run python examples/joycon_to_so101/teleoperate.py \
-    --port=/dev/tty.usbmodem* \
+    --port=/dev/tty.usbmodem5B7B0137181 \
     --mapping=examples/joycon_to_so101/gyro_primary_mapping.yaml \
     --alt-mapping=examples/joycon_to_so101/stick_only_mapping.yaml
 ```
@@ -71,7 +71,7 @@ uv run python examples/joycon_to_so101/teleoperate.py \
 
 ```bash
 uv run python examples/joycon_to_so101/teleoperate.py \
-    --port=/dev/tty.usbmodem* \
+    --port=/dev/tty.usbmodem5B7B0137181 \
     --mapping=examples/joycon_to_so101/stick_only_mapping.yaml
 ```
 

@@ -13,13 +13,14 @@ mappings:
     motor: shoulder_lift
     control: incremental
     speed: 1.5
-    invert: true
+    invert: false
 
   # 轴 3: 肘部 — 右摇杆 Y
   - input: right_stick_y
     motor: elbow_flex
     control: incremental
     speed: 1.5
+    invert: true
 
   # 轴 4: 腕俯仰 — 右摇杆 X
   - input: right_stick_x
@@ -28,19 +29,19 @@ mappings:
     speed: 1.15
 
   # 轴 5: 腕自转 — ZL / ZR
-  - input: zl
+  - input: a
     motor: wrist_roll
     control: incremental
     speed: 1.15
     invert: true
 
-  - input: zr
+  - input: b
     motor: wrist_roll
     control: incremental
     speed: 1.15
 
   # 轴 6: 夹爪 — L / R
-  - input: l
+  - input: zr
     motor: gripper
     control: incremental
     speed: 3.0
