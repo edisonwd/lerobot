@@ -23,6 +23,25 @@ from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
 from .import_utils import require_package
 
 
+def _downscale_image(arr: np.ndarray, max_width: int) -> np.ndarray:
+    """Downscale an HWC image array if its width exceeds max_width."""
+    if arr.ndim != 3 or arr.shape[1] <= max_width:
+        return arr
+    scale = max_width / arr.shape[1]
+    new_h = int(arr.shape[0] * scale)
+    new_w = max_width
+    try:
+        import cv2
+
+        return cv2.resize(arr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    except ImportError:
+        from PIL import Image
+
+        img = Image.fromarray(arr)
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+        return np.array(img)
+
+
 def init_rerun(
     session_name: str = "lerobot_control_loop", ip: str | None = None, port: int | None = None
 ) -> None:
@@ -67,6 +86,7 @@ def log_rerun_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
     compress_images: bool = False,
+    display_max_width: int | None = None,
 ) -> None:
     """
     Logs observation and action data to Rerun for real-time visualization.
@@ -85,6 +105,7 @@ def log_rerun_data(
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
         compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and quality.
+        display_max_width: If set, downscale images so width does not exceed this value before logging.
     """
 
     require_package("rerun-sdk", extra="viz", import_name="rerun")
@@ -107,7 +128,11 @@ def log_rerun_data(
                     for i, vi in enumerate(arr):
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
                 else:
-                    img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
+                    if display_max_width is not None:
+                        arr = _downscale_image(arr, display_max_width)
+                    img_entity = (
+                        rr.Image(arr).compress(jpeg_quality=75) if compress_images else rr.Image(arr)
+                    )
                     rr.log(key, entity=img_entity, static=True)
 
     if action:

@@ -95,7 +95,7 @@ lerobot-teleoperate \
     --robot.port=/dev/tty.usbmodem5B7B0137181 \
     --robot.id=my_awesome_follower_arm \
     --teleop.type=so101_leader \
-    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: 1, width: 800, height: 600, fps: 60}}" \
     --teleop.port=/dev/tty.usbmodem5B7B0141781 \
     --teleop.id=my_awesome_leader_arm \
     --display_data=true

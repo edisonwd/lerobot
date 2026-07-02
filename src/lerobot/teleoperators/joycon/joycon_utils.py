@@ -801,46 +801,97 @@ class JoyConHIDController(InputController):
             self._parse_imu(data)
 
     def _parse_simple_report(self, side: str, data) -> None:
-        """Parse a simple 0x3F report (buttons only, limited stick data).
+        """Parse a simple 0x3F report (buttons + stick, no IMU).
 
-        Simple mode 0x3F layout for a single Joy-Con over Bluetooth:
-            Byte 0: Report ID (0x3F)
-            Byte 1: Side-specific button byte (same bit layout as full mode)
-                - Right Joy-Con: same as full mode byte 3
-                - Left Joy-Con: same as full mode byte 5
-            Byte 2: Shared buttons (plus, minus, home, capture, l_stick_press)
-            Bytes 3+: Stick data (side-specific, 2 bytes per axis)
+        macOS Bluetooth simple mode (0x3F) layout — confirmed by raw dump:
 
-        When two Joy-Cons are connected separately, each sends its own 0x3F.
-        When combined (grip), byte 1=right, byte 2=left, byte 3=shared.
+        Right Joy-Con (12 bytes):
+            Byte 1: Face buttons (same bit layout as full mode byte 3)
+            Byte 2: R/ZR (0x40=R, 0x80=ZR)
+            Byte 3: D-pad (0x04=Up, 0x08=Down, 0x02=Right, 0x01=Left)
+            Byte 4: Stick X (8-bit, 0x80=center)
+            Byte 5: Stick Y (8-bit, 0x80=center)
+
+        Left Joy-Con (12 bytes):
+            Byte 1: Buttons (same bit layout as full mode byte 5)
+            Byte 2: L/ZL
+            Byte 3: D-pad
+            Byte 4: Stick X (8-bit, 0x80=center)
+            Byte 5: Stick Y (8-bit, 0x80=center)
+
+        Simple mode does NOT include: Plus, Minus, Home, Capture, stick_press, IMU.
         """
-        if len(data) < 3:
+        if len(data) < 6:
             return
 
         if side == "right":
-            # Single right Joy-Con: byte 1 = right buttons, byte 2 = shared
+            # Face buttons from byte 1
             right_btns = _parse_buttons_right(data[1])
-            shared_btns = _parse_buttons_shared(data[2])
             self.buttons.update(right_btns)
-            self.buttons.update(shared_btns)
+
+            # D-pad from byte 3
+            dpad = data[3]
+            self.buttons["dpad_up"] = bool(dpad & 0x04)
+            self.buttons["dpad_down"] = bool(dpad & 0x08)
+            self.buttons["dpad_right"] = bool(dpad & 0x02)
+            self.buttons["dpad_left"] = bool(dpad & 0x01)
+
+            # Stick from bytes 4-5 (8-bit, center=0x80)
+            self.right_x = self._normalize_simple_stick(data[4])
+            self.right_y = self._normalize_simple_stick(data[5])
+            self.stick_available = True
+
         elif side == "left":
-            # Single left Joy-Con: byte 1 = left buttons, byte 2 = shared
+            # Face buttons from byte 1
             left_btns = _parse_buttons_left(data[1])
-            shared_btns = _parse_buttons_shared(data[2])
             self.buttons.update(left_btns)
-            self.buttons.update(shared_btns)
+
+            # D-pad from byte 3
+            dpad = data[3]
+            self.buttons["dpad_up"] = bool(dpad & 0x04)
+            self.buttons["dpad_down"] = bool(dpad & 0x08)
+            self.buttons["dpad_right"] = bool(dpad & 0x02)
+            self.buttons["dpad_left"] = bool(dpad & 0x01)
+
+            # Stick from bytes 4-5
+            self.left_x = self._normalize_simple_stick(data[4])
+            self.left_y = self._normalize_simple_stick(data[5])
+            self.stick_available = True
+
         elif side == "combined":
-            # Combined: byte 1 = right, byte 2 = left, byte 3 = shared
-            if len(data) >= 4:
-                right_btns = _parse_buttons_right(data[1])
-                left_btns = _parse_buttons_left(data[2])
-                shared_btns = _parse_buttons_shared(data[3])
-                self.buttons.update(right_btns)
-                self.buttons.update(left_btns)
-                self.buttons.update(shared_btns)
+            right_btns = _parse_buttons_right(data[1])
+            left_btns = _parse_buttons_left(data[2])
+            self.buttons.update(right_btns)
+            self.buttons.update(left_btns)
+            dpad = data[3]
+            self.buttons["dpad_up"] = bool(dpad & 0x04)
+            self.buttons["dpad_down"] = bool(dpad & 0x08)
+            self.buttons["dpad_right"] = bool(dpad & 0x02)
+            self.buttons["dpad_left"] = bool(dpad & 0x01)
+            # Combined stick data (if available)
+            if len(data) >= 8:
+                self.right_x = self._normalize_simple_stick(data[4])
+                self.right_y = self._normalize_simple_stick(data[5])
+                self.left_x = self._normalize_simple_stick(data[6])
+                self.left_y = self._normalize_simple_stick(data[7])
+                self.stick_available = True
 
         # Map buttons to actions (gripper, episode controls, etc.)
         self._map_buttons_to_actions()
+
+    def _normalize_simple_stick(self, raw: int) -> float:
+        """Normalize an 8-bit simple-mode stick value to [-1.0, 1.0].
+
+        Center is 0x80 (128). Range is 0x00–0xFF.
+        """
+        center = 0x80
+        offset = raw - center
+        normalized = offset / center  # scale to [-1.0, 1.0]
+
+        if abs(normalized) < self.deadzone:
+            return 0.0
+
+        return max(-1.0, min(1.0, normalized))
 
     def _parse_battery(self, side: str, info_byte: int) -> None:
         """Parse battery level from the connection info byte.

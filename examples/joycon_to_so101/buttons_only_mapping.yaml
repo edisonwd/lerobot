@@ -1,0 +1,106 @@
+# Joy-Con → SO-101 舵机映射 (macOS 蓝牙 — 仅按键模式)
+#
+# 用于 macOS 蓝牙下 Joy-Con 无法切换到完整模式的情况。
+# 仅有按键可用 (无摇杆、无 IMU)，每个舵机用一对按键控制正/反方向。
+#
+# 按键布局 (右 Joy-Con 竖持):
+#   A / B       → Shoulder Pan 左/右
+#   X / Y       → Shoulder Lift 上/下
+#   R / ZR      → Elbow Flex 抬/降
+#   Plus / Minus → Wrist Flex 前/后
+#   Capture / Home* → Wrist Roll 顺/逆
+#   SL / SR     → Gripper 关/开
+#
+#   * Home 同时是紧急停止 (固定功能)，按住 Capture 控制 Wrist Roll
+#
+# 用法:
+#   uv run python examples/joycon_to_so101/teleoperate.py \
+#       --port=/dev/tty.usbmodem* \
+#       --mode=single_right \
+#       --mapping=examples/joycon_to_so101/buttons_only_mapping.yaml
+
+mappings:
+  # Motor 1: Shoulder Pan (A=左, B=右)
+  - input: a
+    motor: shoulder_pan
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: b
+    motor: shoulder_pan
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 2: Shoulder Lift (X=上, Y=下)
+  - input: x
+    motor: shoulder_lift
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  - input: y
+    motor: shoulder_lift
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  # Motor 3: Elbow Flex (R=抬, ZR=降)
+  - input: r
+    motor: elbow_flex
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: zr
+    motor: elbow_flex
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 4: Wrist Flex (Plus=前, Minus=后)
+  - input: plus
+    motor: wrist_flex
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: minus
+    motor: wrist_flex
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 5: Wrist Roll (r_stick_press=顺时针, capture=逆时针)
+  - input: r_stick_press
+    motor: wrist_roll
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: capture
+    motor: wrist_roll
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 6: Gripper (sl_right=关, sr_right=开)
+  - input: sl_right
+    motor: gripper
+    control: incremental
+    speed: 3.0
+    invert: false
+
+  - input: sr_right
+    motor: gripper
+    control: incremental
+    speed: 3.0
+    invert: true
+
+# 注意: 单右 Joy-Con 模式下，D-pad (方向键) 和左摇杆不可用
+# 速度调节和微调功能需要左 Joy-Con 或双 Joy-Con 模式
+meta_controls:
+  speed_up: dpad_up
+  speed_down: dpad_down
+  fine_tune_toggle: l_stick_press

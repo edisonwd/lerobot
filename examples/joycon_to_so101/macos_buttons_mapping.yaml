@@ -1,0 +1,83 @@
+# Joy-Con → SO-101 舵机映射 (macOS 蓝牙 simple mode)
+#
+# macOS 蓝牙下 Joy-Con 使用 simple mode (0x3F)。
+# 可用: 摇杆、面部按键 (A/B/X/Y)、R/ZR、D-pad
+# 不可用: IMU、Plus/Minus/Home/Capture/Stick Press
+#
+# 用法:
+#   uv run python examples/joycon_to_so101/teleoperate.py \
+#       --port=/dev/tty.usbmodem* \
+#       --mode=single_right \
+#       --mapping=examples/joycon_to_so101/macos_buttons_mapping.yaml
+
+mappings:
+  # Motor 1: Shoulder Pan (右摇杆 X 左右)
+  - input: right_stick_x
+    motor: shoulder_pan
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  # Motor 2: Shoulder Lift (右摇杆 Y 上下)
+  - input: right_stick_y
+    motor: shoulder_lift
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 3: Elbow Flex (R=正, ZR=反)
+  - input: r
+    motor: elbow_flex
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: zr
+    motor: elbow_flex
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 4: Wrist Flex (D-pad Up=正, Down=反)
+  - input: dpad_up
+    motor: wrist_flex
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: dpad_down
+    motor: wrist_flex
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 5: Wrist Roll (D-pad Right=正, Left=反)
+  - input: dpad_right
+    motor: wrist_roll
+    control: incremental
+    speed: 1.5
+    invert: false
+
+  - input: dpad_left
+    motor: wrist_roll
+    control: incremental
+    speed: 1.5
+    invert: true
+
+  # Motor 6: Gripper (A=关, B=开)
+  - input: a
+    motor: gripper
+    control: incremental
+    speed: 3.0
+    invert: false
+
+  - input: b
+    motor: gripper
+    control: incremental
+    speed: 3.0
+    invert: true
+
+meta_controls:
+  speed_up: y
+  speed_down: x
+  fine_tune_toggle: r
